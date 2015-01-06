@@ -31,6 +31,11 @@ G_BEGIN_DECLS
 typedef struct _GdkDeviceClass GdkDeviceClass;
 typedef struct _GdkDeviceKey GdkDeviceKey;
 
+struct _GdkDeviceTool
+{
+  guint serial;
+};
+
 struct _GdkDeviceKey
 {
   guint keyval;
@@ -59,6 +64,8 @@ struct _GdkDevice
 
   gchar *vendor_id;
   gchar *product_id;
+
+  GPtrArray *tools;
 };
 
 struct _GdkDeviceClass
@@ -175,6 +182,13 @@ GdkWindow * _gdk_device_window_at_position    (GdkDevice        *device,
                                                gdouble          *win_y,
                                                GdkModifierType  *mask,
                                                gboolean          get_toplevel);
+
+/* Device tools */
+GdkDeviceTool *gdk_device_tool_new    (guint          serial);
+GdkDeviceTool *gdk_device_lookup_tool (GdkDevice     *device,
+                                       guint          serial);
+void           gdk_device_add_tool    (GdkDevice     *device,
+                                       GdkDeviceTool *tool);
 
 G_END_DECLS
 
