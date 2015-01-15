@@ -92,7 +92,7 @@ struct _GdkWaylandDeviceData
 
   GdkDragContext *drop_context;
 
-  struct wl_surface *pointer_surface;
+  struct wl_surface *cursor_surface;
 };
 
 struct _GdkWaylandDevice
@@ -204,12 +204,12 @@ gdk_wayland_device_update_window_cursor (GdkWaylandDeviceData *wd)
 
   wl_pointer_set_cursor (wd->wl_pointer,
                          wd->enter_serial,
-                         wd->pointer_surface,
+                         wd->cursor_surface,
                          x, y);
-  wl_surface_attach (wd->pointer_surface, buffer, 0, 0);
-  wl_surface_set_buffer_scale (wd->pointer_surface, scale);
-  wl_surface_damage (wd->pointer_surface,  0, 0, w, h);
-  wl_surface_commit (wd->pointer_surface);
+  wl_surface_attach (wd->cursor_surface, buffer, 0, 0);
+  wl_surface_set_buffer_scale (wd->cursor_surface, scale);
+  wl_surface_damage (wd->cursor_surface,  0, 0, w, h);
+  wl_surface_commit (wd->cursor_surface);
 
   if (wd->grab_cursor)
     {
@@ -1774,7 +1774,7 @@ _gdk_wayland_device_manager_add_seat (GdkDeviceManager *device_manager,
   wl_data_device_add_listener (device->data_device,
                                &data_device_listener, device);
 
-  device->pointer_surface =
+  device->cursor_surface =
     wl_compositor_create_surface (display_wayland->compositor);
 
   init_devices (device);
@@ -1796,7 +1796,7 @@ _gdk_wayland_device_manager_remove_seat (GdkDeviceManager *manager,
         {
           seat_handle_capabilities (device, device->wl_seat, 0);
           g_object_unref (device->keymap);
-          wl_surface_destroy (device->pointer_surface);
+          wl_surface_destroy (device->cursor_surface);
           /* FIXME: destroy data_device */
           g_clear_object (&device->keyboard_settings);
           g_hash_table_destroy (device->touches);
