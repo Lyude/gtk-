@@ -146,6 +146,7 @@ gdk_registry_handle_global(void *data, struct wl_registry *registry, uint32_t id
   GdkWaylandDisplay *display_wayland = data;
   GdkDisplay *gdk_display = GDK_DISPLAY_OBJECT (data);
   struct wl_seat *seat;
+  struct wl_tablet_manager *tablet_manager;
   struct wl_output *output;
 
   if (strcmp(interface, "wl_compositor") == 0) {
@@ -182,6 +183,10 @@ gdk_registry_handle_global(void *data, struct wl_registry *registry, uint32_t id
     display_wayland->subcompositor =
       wl_registry_bind (display_wayland->wl_registry, id,
                         &wl_subcompositor_interface, 1);
+  } else if (strcmp (interface, "wl_tablet_manager") == 0) {
+    tablet_manager = wl_registry_bind(display_wayland->wl_registry, id,
+                                      &wl_tablet_manager_interface, 1);
+    _gdk_wayland_device_manager_add_tablet_manager (tablet_manager);
   }
 }
 
