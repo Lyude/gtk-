@@ -1999,6 +1999,103 @@ tablet_handle_frame (void             *data,
 }
 
 static void
+tablet_handle_down (void             *data,
+                    struct wl_tablet *wl_tablet,
+                    uint32_t          serial,
+                    uint32_t          time)
+{
+  GdkWaylandDeviceTabletPair *device_pair = data;
+  GdkWaylandDeviceData *device = device_pair->wd;
+  GdkWaylandDisplay *wayland_display = GDK_WAYLAND_DISPLAY (device->display);
+  GdkEvent *event;
+
+  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
+    return;
+  if (!device_pair->focus)
+    return;
+
+  _gdk_wayland_display_update_serial (wayland_display, serial);
+
+  device->time = time;
+  device->button_press_serial = serial;
+
+  event = gdk_event_new (GDK_BUTTON_PRESS);
+  event->button.window = g_object_ref (device_pair->focus);
+  gdk_event_set_device (event, device->master_pointer);
+  gdk_event_set_source_device (event, device_pair->current_device);
+  event->button.time = time;
+  event->button.axes = NULL;
+  event->button.state = device->modifiers;
+  event->button.button = GDK_BUTTON_PRIMARY;
+  gdk_event_set_screen (event, wayland_display->screen);
+
+  get_coordinates (device,
+                   &event->button.x,
+                   &event->button.y,
+                   &event->button.x_root,
+                   &event->button.y_root);
+
+  device->modifiers |= GDK_BUTTON1_MASK;
+
+  GDK_NOTE (EVENTS,
+            g_message ("button %d %s, state %d",
+                       event->button.button, "press", event->button.state));
+
+  gdk_wayland_device_set_cursor_device (device, wl_tablet);
+  device->wl_cursor_device_locked = TRUE;
+
+  _gdk_wayland_display_deliver_event (device->display, event);
+}
+
+static void
+tablet_handle_up (void             *data,
+                  struct wl_tablet *wl_tablet,
+                  uint32_t          serial)
+{
+  GdkWaylandDeviceTabletPair *device_pair = data;
+  GdkWaylandDeviceData *device = device_pair->wd;
+  GdkWaylandDisplay *wayland_display = GDK_WAYLAND_DISPLAY (device->display);
+  GdkEvent *event;
+  guint32 time;
+
+  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
+    return;
+  if (!device_pair->focus)
+    return;
+
+  _gdk_wayland_display_update_serial (wayland_display, serial);
+
+  time = (guint32)(g_get_monotonic_time () / 1000);
+
+  device->time = time;
+  device->button_press_serial = serial;
+
+  event = gdk_event_new (GDK_BUTTON_RELEASE);
+  event->button.window = g_object_ref (device_pair->focus);
+  gdk_event_set_device (event, device->master_pointer);
+  gdk_event_set_source_device (event, device_pair->current_device);
+  event->button.time = time;
+  event->button.axes = NULL;
+  event->button.state = device->modifiers;
+  event->button.button = GDK_BUTTON_PRIMARY;
+  gdk_event_set_screen (event, wayland_display->screen);
+
+  get_coordinates (device,
+                   &event->button.x,
+                   &event->button.y,
+                   &event->button.x_root,
+                   &event->button.y_root);
+
+  device->modifiers &= ~GDK_BUTTON1_MASK;
+
+  /* Check if any of the button modifiers are currently set */
+  if (!(device->modifiers & 0x1F00))
+    device->wl_cursor_device_locked = FALSE;
+
+  _gdk_wayland_display_deliver_event (device->display, event);
+}
+
+static void
 tablet_handle_removed (void             *data,
                        struct wl_tablet *wl_tablet)
 {
@@ -2041,8 +2138,8 @@ static const struct wl_tablet_listener tablet_listener = {
   tablet_handle_proximity_in,
   tablet_handle_proximity_out,
   tablet_handle_motion,
-  tablet_handler_placeholder, /* down */
-  tablet_handler_placeholder, /* up */
+  tablet_handle_down,
+  tablet_handle_up,
   tablet_handler_placeholder, /* pressure */
   tablet_handler_placeholder, /* distance */
   tablet_handler_placeholder, /* tilt */
