@@ -1912,13 +1912,15 @@ gdk_device_get_product_id (GdkDevice *device)
 static GdkDeviceTool *
 gdk_device_tool_copy (GdkDeviceTool *tool)
 {
+  tool->ref_count++;
   return tool;
 }
 
 static void
 gdk_device_tool_free (GdkDeviceTool *tool)
 {
-  /* Nothing to free here, memory is owned by GdkDevice */
+  if (--tool->ref_count == 0)
+    g_free (tool);
 }
 
 G_DEFINE_BOXED_TYPE (GdkDeviceTool, gdk_device_tool,
@@ -1933,6 +1935,7 @@ gdk_device_tool_new (guint             serial,
   tool = g_new0 (GdkDeviceTool, 1);
   tool->serial = serial;
   tool->type = type;
+  tool->ref_count = 1;
 
   return tool;
 }
@@ -1946,9 +1949,10 @@ gdk_device_add_tool (GdkDevice     *device,
   g_return_if_fail (tool != NULL);
 
   if (!device->tools)
-    device->tools = g_ptr_array_new_with_free_func ((GDestroyNotify) g_free);
+    device->tools =
+      g_ptr_array_new_with_free_func ((GDestroyNotify) gdk_device_tool_free);
 
-  g_ptr_array_add (device->tools, tool);
+  g_ptr_array_add (device->tools, gdk_device_tool_copy(tool));
 }
 
 GdkDeviceTool *

@@ -35,6 +35,7 @@ struct _GdkDeviceTool
 {
   guint serial;
   GdkDeviceToolType type;
+  gint ref_count;
 };
 
 struct _GdkDeviceKey
