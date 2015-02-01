@@ -1909,14 +1909,14 @@ gdk_device_get_product_id (GdkDevice *device)
   return device->product_id;
 }
 
-static GdkDeviceTool *
+GdkDeviceTool *
 gdk_device_tool_copy (GdkDeviceTool *tool)
 {
   tool->ref_count++;
   return tool;
 }
 
-static void
+void
 gdk_device_tool_free (GdkDeviceTool *tool)
 {
   if (--tool->ref_count == 0)

@@ -190,6 +190,8 @@ GdkWindow * _gdk_device_window_at_position    (GdkDevice        *device,
 /* Device tools */
 GdkDeviceTool *gdk_device_tool_new    (guint              serial,
                                        GdkDeviceToolType  type);
+GdkDeviceTool *gdk_device_tool_copy   (GdkDeviceTool     *tool);
+void           gdk_device_tool_free   (GdkDeviceTool     *tool);
 GdkDeviceTool *gdk_device_lookup_tool (GdkDevice         *device,
                                        guint              serial);
 void           gdk_device_add_tool    (GdkDevice         *device,
