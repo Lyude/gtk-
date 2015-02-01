@@ -2288,6 +2288,19 @@ static const struct wl_seat_listener seat_listener = {
 };
 
 static void
+tablet_tool_handle_removed (void                  *data,
+                            struct wl_tablet_tool *wl_tool)
+{
+  GdkDeviceTool *tool = data;
+
+  gdk_device_tool_free(tool);
+}
+
+static const struct wl_tablet_tool_listener tablet_tool_listener = {
+  tablet_tool_handle_removed
+};
+
+static void
 tablet_manager_handle_device_added (void                     *data,
                                     struct wl_tablet_manager *wl_tablet_manager,
                                     struct wl_tablet         *id,
@@ -2415,7 +2428,7 @@ tablet_manager_handle_tool_added (void                     *data,
   else
     g_ptr_array_add (device_manager->tools, tool);
 
-  wl_tablet_tool_set_user_data (wl_tablet_tool, tool);
+  wl_tablet_tool_add_listener (wl_tablet_tool, &tablet_tool_listener, tool);
 }
 
 /* Temporary, this is needed until wl_tablet is an official part of the wayland
