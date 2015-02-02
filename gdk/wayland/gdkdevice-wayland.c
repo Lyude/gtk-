@@ -159,6 +159,52 @@ GType gdk_wayland_device_manager_get_type (void);
 G_DEFINE_TYPE (GdkWaylandDeviceManager,
 	       gdk_wayland_device_manager, GDK_TYPE_DEVICE_MANAGER)
 
+typedef struct _GdkWaylandDeviceTool GdkWaylandDeviceTool;
+
+struct _GdkWaylandDeviceTool
+{
+  GdkDeviceTool parent_object;
+  enum wl_tablet_tool_axis_flag axes;
+};
+
+static GdkWaylandDeviceTool *
+gdk_wayland_device_tool_copy (GdkWaylandDeviceTool *wayland_tool)
+{
+  ((GdkDeviceTool*) wayland_tool)->ref_count++;
+  return wayland_tool;
+}
+
+static void
+gdk_wayland_device_tool_free (GdkWaylandDeviceTool *wayland_tool)
+{
+  GdkDeviceTool *tool = (GdkDeviceTool*)wayland_tool;
+
+  if (--tool->ref_count == 0)
+    g_free(wayland_tool);
+}
+
+G_DEFINE_BOXED_TYPE (GdkWaylandDeviceTool, gdk_wayland_device_tool,
+                     gdk_wayland_device_tool_copy, gdk_wayland_device_tool_free);
+
+GdkWaylandDeviceTool *
+gdk_wayland_device_tool_new (guint serial,
+                             GdkDeviceToolType type,
+                             enum wl_tablet_tool_axis_flag axes)
+{
+  GdkWaylandDeviceTool *wayland_tool;
+  GdkDeviceTool *tool;
+
+  wayland_tool = g_new0 (GdkWaylandDeviceTool, 1);
+  tool = (GdkDeviceTool*)wayland_tool;
+
+  tool->serial = serial;
+  tool->type = type;
+  tool->ref_count = 1;
+  wayland_tool->axes = axes;
+
+  return wayland_tool;
+}
+
 static gboolean
 gdk_wayland_device_get_history (GdkDevice      *device,
                                 GdkWindow      *window,
@@ -1782,7 +1828,9 @@ tablet_handle_proximity_in (void                  *data,
   GdkWaylandDeviceTabletPair *device_pair = data;
   GdkWaylandDeviceData *device = device_pair->wd;
   GdkWaylandDisplay *wayland_display = GDK_WAYLAND_DISPLAY (device->display);
-  GdkDeviceTool *tool = wl_tablet_tool_get_user_data (wl_tablet_tool);
+  GdkWaylandDeviceTool *wayland_tool =
+    wl_tablet_tool_get_user_data (wl_tablet_tool);
+  GdkDeviceTool *tool = (GdkDeviceTool*) wayland_tool;
   GdkWindow *window = wl_surface_get_user_data (surface);
   GdkEvent *event;
   guint tablet_focus_count;
@@ -2414,10 +2462,14 @@ tablet_manager_handle_tool_added (void                     *data,
     wl_tablet_get_user_data (wl_tablet);
   GdkWaylandDeviceManager *device_manager =
     GDK_WAYLAND_DEVICE_MANAGER (device->device_manager);
+  GdkWaylandDeviceTool *wayland_tool;
   GdkDeviceTool *tool;
 
-  tool = gdk_device_tool_new (tool_serial,
-                              wl_tool_type_to_gdk_tool_type (tool_type));
+  wayland_tool =
+    gdk_wayland_device_tool_new (tool_serial,
+                                 wl_tool_type_to_gdk_tool_type (tool_type),
+                                 extra_axes);
+  tool = (GdkDeviceTool*) wayland_tool;
 
   /* If the tool has no serial, add it with the device's own list of tools,
    * otherwise add it to the global list of tools
@@ -2428,7 +2480,8 @@ tablet_manager_handle_tool_added (void                     *data,
   else
     g_ptr_array_add (device_manager->tools, tool);
 
-  wl_tablet_tool_add_listener (wl_tablet_tool, &tablet_tool_listener, tool);
+  wl_tablet_tool_add_listener (wl_tablet_tool, &tablet_tool_listener,
+                               wayland_tool);
 }
 
 /* Temporary, this is needed until wl_tablet is an official part of the wayland
