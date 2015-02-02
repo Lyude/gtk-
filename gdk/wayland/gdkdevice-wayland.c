@@ -59,6 +59,11 @@ struct _GdkWaylandDeviceTabletPair
 
   struct wl_surface *cursor_surface;
   GdkWindow *focus;
+
+  gint pressure_axis_index;
+  gint xtilt_axis_index;
+  gint ytilt_axis_index;
+  gint distance_axis_index;
 };
 
 struct _GdkWaylandDeviceData
@@ -371,11 +376,51 @@ gdk_wayland_device_set_blank_cursor (GdkWaylandDeviceData *wd,
 }
 
 static void
+gdk_wayland_mimic_device_axes (GdkWaylandDeviceData *wd,
+                               GdkDevice            *device)
+{
+  gdouble axis_min, axis_max, axis_resolution;
+  GdkAtom axis_label;
+  GdkAxisUse axis_use;
+  gint axis_count;
+  gint i;
+
+  g_object_freeze_notify (G_OBJECT (wd->master_pointer));
+  _gdk_device_reset_axes (wd->master_pointer);
+  axis_count = gdk_device_get_n_axes (device);
+
+  for (i = 0; i < axis_count; i++)
+    {
+      _gdk_device_get_axis_info (device, i, &axis_label, &axis_use, &axis_min,
+                                 &axis_max, &axis_resolution);
+      _gdk_device_add_axis (wd->master_pointer, axis_label, axis_use, axis_min,
+                            axis_max, axis_resolution);
+    }
+
+  g_object_thaw_notify (G_OBJECT (wd->master_pointer));
+}
+
+static void
 gdk_wayland_device_set_cursor_device (GdkWaylandDeviceData *wd,
                                       gpointer              cursor_device)
 {
   if (wd->wl_cursor_device == cursor_device)
     return;
+
+  if (cursor_device)
+    {
+      /* Have the master pointer clone the axis capabilities of the new cursor
+       * device */
+      if (cursor_device == wd->wl_pointer)
+        gdk_wayland_mimic_device_axes (wd, wd->pointer);
+      else
+        {
+          GdkWaylandDeviceTabletPair *device_pair =
+            wl_tablet_get_user_data (cursor_device);
+
+          gdk_wayland_mimic_device_axes (wd, device_pair->current_device);
+        }
+    }
 
   if (wd->wl_cursor_device)
     gdk_wayland_device_set_blank_cursor (wd, wd->wl_cursor_device);
@@ -1818,6 +1863,44 @@ gdk_wayland_device_get_tablet_focus_count (GdkWaylandDeviceData *device,
 }
 
 static void
+gdk_wayland_device_tablet_clone_tool_axes (GdkWaylandDeviceTabletPair *tablet,
+                                           GdkWaylandDeviceTool *tool)
+{
+  gint axis_pos;
+
+  g_object_freeze_notify (G_OBJECT (tablet->current_device));
+  _gdk_device_reset_axes (tablet->current_device);
+
+  _gdk_device_add_axis (tablet->current_device, GDK_NONE, GDK_AXIS_X, 0, 0, 0);
+  _gdk_device_add_axis (tablet->current_device, GDK_NONE, GDK_AXIS_Y, 0, 0, 0);
+
+  if (tool->axes & WL_TABLET_TOOL_AXIS_FLAG_TILT)
+    {
+      axis_pos = _gdk_device_add_axis (tablet->current_device, GDK_NONE,
+                                       GDK_AXIS_XTILT, -65535, 65535, 0);
+      tablet->xtilt_axis_index = axis_pos;
+
+      axis_pos = _gdk_device_add_axis (tablet->current_device, GDK_NONE,
+                                       GDK_AXIS_YTILT, -65535, 65535, 0);
+      tablet->ytilt_axis_index = axis_pos;
+    }
+  if (tool->axes & WL_TABLET_TOOL_AXIS_FLAG_DISTANCE)
+    {
+      axis_pos = _gdk_device_add_axis (tablet->current_device, GDK_NONE,
+                                       GDK_AXIS_DISTANCE, 0, 65535, 0);
+      tablet->distance_axis_index = axis_pos;
+    }
+  if (tool->axes & WL_TABLET_TOOL_AXIS_FLAG_PRESSURE)
+    {
+      axis_pos = _gdk_device_add_axis (tablet->current_device, GDK_NONE,
+                                       GDK_AXIS_PRESSURE, 0, 65535, 0);
+      tablet->pressure_axis_index = axis_pos;
+    }
+
+  g_object_thaw_notify (G_OBJECT (tablet->current_device));
+}
+
+static void
 tablet_handle_proximity_in (void                  *data,
                             struct wl_tablet      *wl_tablet,
                             uint32_t               serial,
@@ -1856,6 +1939,7 @@ tablet_handle_proximity_in (void                  *data,
     gdk_device_add_tool (device_pair->current_device, tool);
 
   gdk_device_update_tool (device_pair->current_device, tool);
+  gdk_wayland_device_tablet_clone_tool_axes (device_pair, wayland_tool);
 
   event = gdk_event_new (GDK_PROXIMITY_IN);
   event->proximity.type = GDK_PROXIMITY_IN;
