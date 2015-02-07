@@ -609,6 +609,8 @@ gdk_wayland_device_ungrab (GdkDevice *device,
                                                 NULL,
                                                 NULL,
                                                 0);
+
+      wayland_device->wl_cursor_device_locked = FALSE;
     }
 }
 
