@@ -93,6 +93,7 @@ struct _GdkWaylandDeviceData
   GdkWindow *keyboard_focus;
   struct wl_data_device *data_device;
   double surface_x, surface_y;
+  double pointer_x, pointer_y;
   uint32_t time;
   uint32_t enter_serial;
   uint32_t button_press_serial;
@@ -1069,6 +1070,8 @@ pointer_handle_motion (void              *data,
   device->time = time;
   device->surface_x = wl_fixed_to_double (sx);
   device->surface_y = wl_fixed_to_double (sy);
+  device->pointer_x = device->surface_x;
+  device->pointer_y = device->surface_y;
 
   event->motion.type = GDK_MOTION_NOTIFY;
   event->motion.window = g_object_ref (device->pointer_focus);
@@ -1979,6 +1982,7 @@ tablet_handle_proximity_out (void             *data,
 {
   GdkWaylandDeviceTabletPair *device_pair = data;
   GdkWaylandDeviceData *device = device_pair->wd;
+  GdkWaylandDisplay *display = GDK_WAYLAND_DISPLAY (device->display);
   GdkEvent *event;
   guint tablet_focus_count;
 
@@ -2032,7 +2036,32 @@ tablet_handle_proximity_out (void             *data,
         gdk_wayland_device_stop_window_cursor_animation (device);
     }
   else if (device->pointer_focus == device_pair->focus)
-    gdk_wayland_device_set_cursor_device (device, device->wl_pointer);
+    {
+      /* Send a motion event with the current cursor coordinates so the
+       * appropriate widgets and the cursor image update */
+      device->surface_x = device->pointer_x;
+      device->surface_y = device->pointer_y;
+
+      event = gdk_event_new (GDK_MOTION_NOTIFY);
+      event->motion.window = g_object_ref (device_pair->focus);
+      gdk_event_set_device (event, device->master_pointer);
+      gdk_event_set_source_device (event, device->pointer);
+      event->motion.time = time;
+      event->motion.axes = NULL;
+      event->motion.state = device->modifiers;
+      event->motion.is_hint = 0;
+      gdk_event_set_screen (event, display->screen);
+
+      gdk_wayland_device_set_cursor_device (device, device->wl_pointer);
+
+      get_coordinates (device,
+                       &event->motion.x,
+                       &event->motion.y,
+                       &event->motion.x_root,
+                       &event->motion.y_root);
+
+      _gdk_wayland_display_deliver_event (device->display, event);
+    }
   else
     gdk_wayland_device_set_cursor_device (device, NULL);
 
