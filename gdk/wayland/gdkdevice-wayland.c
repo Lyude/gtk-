@@ -53,6 +53,7 @@ struct _GdkWaylandDeviceTabletPair
 {
   struct wl_tablet *wl_tablet;
   GdkWaylandDeviceData *wd;
+  GdkDevice *master;
   GdkDevice *stylus_device;
   GdkDevice *eraser_device;
   GdkDevice *current_device;
@@ -378,8 +379,8 @@ gdk_wayland_device_set_blank_cursor (GdkWaylandDeviceData *wd,
 }
 
 static void
-gdk_wayland_mimic_device_axes (GdkWaylandDeviceData *wd,
-                               GdkDevice            *device)
+gdk_wayland_mimic_device_axes (GdkDevice *master,
+                               GdkDevice *slave)
 {
   gdouble axis_min, axis_max, axis_resolution;
   GdkAtom axis_label;
@@ -387,19 +388,19 @@ gdk_wayland_mimic_device_axes (GdkWaylandDeviceData *wd,
   gint axis_count;
   gint i;
 
-  g_object_freeze_notify (G_OBJECT (wd->master_pointer));
-  _gdk_device_reset_axes (wd->master_pointer);
-  axis_count = gdk_device_get_n_axes (device);
+  g_object_freeze_notify (G_OBJECT (master));
+  _gdk_device_reset_axes (master);
+  axis_count = gdk_device_get_n_axes (slave);
 
   for (i = 0; i < axis_count; i++)
     {
-      _gdk_device_get_axis_info (device, i, &axis_label, &axis_use, &axis_min,
+      _gdk_device_get_axis_info (slave, i, &axis_label, &axis_use, &axis_min,
                                  &axis_max, &axis_resolution);
-      _gdk_device_add_axis (wd->master_pointer, axis_label, axis_use, axis_min,
+      _gdk_device_add_axis (master, axis_label, axis_use, axis_min,
                             axis_max, axis_resolution);
     }
 
-  g_object_thaw_notify (G_OBJECT (wd->master_pointer));
+  g_object_thaw_notify (G_OBJECT (master));
 }
 
 static void
@@ -408,21 +409,6 @@ gdk_wayland_device_set_cursor_device (GdkWaylandDeviceData *wd,
 {
   if (wd->wl_cursor_device == cursor_device)
     return;
-
-  if (cursor_device)
-    {
-      /* Have the master pointer clone the axis capabilities of the new cursor
-       * device */
-      if (cursor_device == wd->wl_pointer)
-        gdk_wayland_mimic_device_axes (wd, wd->pointer);
-      else
-        {
-          GdkWaylandDeviceTabletPair *device_pair =
-            wl_tablet_get_user_data (cursor_device);
-
-          gdk_wayland_mimic_device_axes (wd, device_pair->current_device);
-        }
-    }
 
   if (wd->wl_cursor_device)
     gdk_wayland_device_set_blank_cursor (wd, wd->wl_cursor_device);
@@ -1834,15 +1820,20 @@ _gdk_wayland_device_manager_remove_tablet (GdkWaylandDeviceTabletPair *device_pa
   wl_tablet_release (device_pair->wl_tablet);
 
   device_manager->devices =
+    g_list_remove (device_manager->devices, device_pair->master);
+  device_manager->devices =
     g_list_remove (device_manager->devices, device_pair->stylus_device);
   device_manager->devices =
     g_list_remove (device_manager->devices, device_pair->eraser_device);
 
   g_signal_emit_by_name (device_manager, "device-removed",
-                         device_pair->stylus_device);
+                         device_pair->master);
+  g_signal_emit_by_name (device_manager, "device-removed",
+                         device_pair->eraser_device);
   g_signal_emit_by_name (device_manager, "device-removed",
                          device_pair->eraser_device);
 
+  _gdk_device_set_associated_device (device_pair->master, NULL);
   _gdk_device_set_associated_device (device_pair->stylus_device, NULL);
   _gdk_device_set_associated_device (device_pair->eraser_device, NULL);
 
@@ -1955,10 +1946,11 @@ tablet_handle_proximity_in (void                  *data,
 
   gdk_device_update_tool (device_pair->current_device, tool);
   gdk_wayland_device_tablet_clone_tool_axes (device_pair, wayland_tool);
+  gdk_wayland_mimic_device_axes (device_pair->master, device_pair->current_device);
 
   event = gdk_event_new (GDK_PROXIMITY_IN);
   event->proximity.window = g_object_ref (device_pair->focus);
-  gdk_event_set_device (event, device->master_pointer);
+  gdk_event_set_device (event, device_pair->master);
   gdk_event_set_source_device (event, device_pair->current_device);
   event->proximity.time = time;
 
@@ -1999,7 +1991,7 @@ tablet_handle_proximity_out (void             *data,
 
   event->proximity.type = GDK_PROXIMITY_OUT;
   event->proximity.window = g_object_ref (device_pair->focus);
-  gdk_event_set_device (event, device->master_pointer);
+  gdk_event_set_device (event, device_pair->master);
   gdk_event_set_source_device (event, device_pair->current_device);
   event->proximity.time = time;
 
@@ -2022,7 +2014,7 @@ tablet_handle_proximity_out (void             *data,
     {
       event = gdk_event_new (GDK_LEAVE_NOTIFY);
       event->crossing.window = g_object_ref (device_pair->focus);
-      gdk_event_set_device (event, device->master_pointer);
+      gdk_event_set_device (event, device_pair->master);
       gdk_event_set_source_device (event, device_pair->current_device);
       event->crossing.subwindow = NULL;
       event->crossing.time = time;
@@ -2053,7 +2045,7 @@ tablet_handle_proximity_out (void             *data,
 
       event = gdk_event_new (GDK_MOTION_NOTIFY);
       event->motion.window = g_object_ref (device_pair->focus);
-      gdk_event_set_device (event, device->master_pointer);
+      gdk_event_set_device (event, device_pair->master);
       gdk_event_set_source_device (event, device->pointer);
       event->motion.time = time;
       event->motion.axes = NULL;
@@ -2180,7 +2172,7 @@ tablet_handle_frame (void             *data,
 
       event = gdk_event_new (GDK_ENTER_NOTIFY);
       event->crossing.window = g_object_ref (device_pair->focus);
-      gdk_event_set_device (event, device->master_pointer);
+      gdk_event_set_device (event, device_pair->master);
       gdk_event_set_source_device (event, device_pair->current_device);
       event->crossing.subwindow = NULL;
       event->crossing.time = device->time;
@@ -2206,7 +2198,7 @@ tablet_handle_frame (void             *data,
     {
       event = gdk_event_new (GDK_MOTION_NOTIFY);
       event->motion.window = g_object_ref (device_pair->focus);
-      gdk_event_set_device (event, device->master_pointer);
+      gdk_event_set_device (event, device_pair->master);
       gdk_event_set_source_device (event, device_pair->current_device);
       event->motion.time = device->time;
       event->motion.axes =
@@ -2257,7 +2249,7 @@ tablet_handle_down (void             *data,
 
   event = gdk_event_new (GDK_BUTTON_PRESS);
   event->button.window = g_object_ref (device_pair->focus);
-  gdk_event_set_device (event, device->master_pointer);
+  gdk_event_set_device (event, device_pair->master);
   gdk_event_set_source_device (event, device_pair->current_device);
   event->button.time = time;
   event->button.axes = NULL;
@@ -2308,7 +2300,7 @@ tablet_handle_up (void             *data,
 
   event = gdk_event_new (GDK_BUTTON_RELEASE);
   event->button.window = g_object_ref (device_pair->focus);
-  gdk_event_set_device (event, device->master_pointer);
+  gdk_event_set_device (event, device_pair->master);
   gdk_event_set_source_device (event, device_pair->current_device);
   event->button.time = time;
   event->button.axes = NULL;
@@ -2551,14 +2543,26 @@ tablet_manager_handle_device_added (void                     *data,
     GDK_WAYLAND_DEVICE_MANAGER (device->device_manager);
   GdkWaylandDisplay *wayland_display = GDK_WAYLAND_DISPLAY (device->display);
   GdkWaylandDeviceTabletPair *device_pair;
-  GdkDevice *stylus_device, *eraser_device;
-  gchar *eraser_name;
+  GdkDevice *master, *stylus_device, *eraser_device;
+  gchar *master_name, *eraser_name;
 
   device_pair = g_new0 (GdkWaylandDeviceTabletPair, 1);
   device_pair->wd = device;
   device_pair->cursor_surface =
     wl_compositor_create_surface (wayland_display->compositor);
   device_pair->wl_tablet = id;
+
+  master_name = g_strdup_printf ("Master pointer for %s", name);
+  master = g_object_new (GDK_TYPE_WAYLAND_DEVICE,
+                         "name", master_name,
+                         "type", GDK_DEVICE_TYPE_MASTER,
+                         "input-source", GDK_SOURCE_MOUSE,
+                         "input-mode", GDK_MODE_SCREEN,
+                         "has-cursor", TRUE,
+                         "display", device->display,
+                         "device-manager", device->device_manager,
+                         NULL);
+  GDK_WAYLAND_DEVICE (master)->device = device;
 
   eraser_name = g_strconcat (name, " (Eraser)", NULL);
 
@@ -2584,6 +2588,11 @@ tablet_manager_handle_device_added (void                     *data,
                                 NULL);
   GDK_WAYLAND_DEVICE (eraser_device)->device = device;
 
+  device_pair->master = master;
+  device_manager->devices =
+    g_list_prepend (device_manager->devices, device_pair->master);
+  g_signal_emit_by_name (device_manager, "device-added", master);
+
   device_pair->stylus_device = stylus_device;
   device_manager->devices =
     g_list_prepend (device_manager->devices, device_pair->stylus_device);
@@ -2596,13 +2605,15 @@ tablet_manager_handle_device_added (void                     *data,
 
   wl_tablet_add_listener (id, &tablet_listener, device_pair);
 
-  _gdk_device_set_associated_device (stylus_device, device->master_pointer);
-  _gdk_device_set_associated_device (eraser_device, device->master_pointer);
+  _gdk_device_set_associated_device (device_pair->master, device->master_keyboard);
+  _gdk_device_set_associated_device (stylus_device, device_pair->master);
+  _gdk_device_set_associated_device (eraser_device, device_pair->master);
 
   device_manager->tablet_pairs =
     g_list_prepend (device_manager->tablet_pairs, device_pair);
 
   g_free (eraser_name);
+  g_free (master_name);
 }
 
 static inline GdkDeviceToolType
