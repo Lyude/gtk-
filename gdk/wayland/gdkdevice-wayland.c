@@ -2085,36 +2085,35 @@ tablet_handle_frame (void             *data,
       GDK_NOTE (EVENTS,
                 g_message ("enter, device %p surface %p",
                            device, device_pair->focus));
-    }
-  else
-    {
-      event = gdk_event_new (GDK_MOTION_NOTIFY);
-      event->motion.window = g_object_ref (device_pair->focus);
-      gdk_event_set_device (event, device_pair->master);
-      gdk_event_set_source_device (event, device_pair->current_device);
-      event->motion.time = device->time;
-      event->motion.axes =
-        g_memdup (device_pair->axes,
-                  sizeof (gdouble) *
-                  gdk_device_get_n_axes (device_pair->current_device));
-      event->motion.state = device->modifiers;
-      event->motion.is_hint = 0;
-      gdk_event_set_screen (event, display->screen);
 
-      get_coordinates (device,
-                       &event->motion.x,
-                       &event->motion.y,
-                       &event->motion.x_root,
-                       &event->motion.y_root);
-
-      GDK_NOTE (EVENTS,
-                g_message ("tablet motion %lf %lf, state %d",
-                           device->surface_x, device->surface_y,
-                           event->button.state));
-
-      gdk_wayland_device_update_window_cursor (device_pair->master);
+      _gdk_wayland_display_deliver_event (device->display, event);
     }
 
+  event = gdk_event_new (GDK_MOTION_NOTIFY);
+  event->motion.window = g_object_ref (device_pair->focus);
+  gdk_event_set_device (event, device_pair->master);
+  gdk_event_set_source_device (event, device_pair->current_device);
+  event->motion.time = device->time;
+  event->motion.axes =
+    g_memdup (device_pair->axes,
+              sizeof (gdouble) *
+              gdk_device_get_n_axes (device_pair->current_device));
+  event->motion.state = device->modifiers;
+  event->motion.is_hint = 0;
+  gdk_event_set_screen (event, display->screen);
+
+  get_coordinates (device,
+                   &event->motion.x,
+                   &event->motion.y,
+                   &event->motion.x_root,
+                   &event->motion.y_root);
+
+  GDK_NOTE (EVENTS,
+            g_message ("tablet motion %lf %lf, state %d",
+                       device->surface_x, device->surface_y,
+                       event->button.state));
+
+  gdk_wayland_device_update_window_cursor (device_pair->master);
   _gdk_wayland_display_deliver_event (device->display, event);
 }
 
