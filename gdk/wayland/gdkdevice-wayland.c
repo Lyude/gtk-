@@ -117,8 +117,6 @@ struct _GdkWaylandDeviceData
 
   struct wl_surface *pointer_cursor_surface;
 
-  gpointer wl_cursor_device;
-  gboolean wl_cursor_device_locked;
   GHashTable *tablet_surfaces;
   gboolean tablet_cursor_enter_event_needed;
 };
@@ -252,13 +250,35 @@ gdk_wayland_device_stop_window_cursor_animation (GdkWaylandDeviceData *wd)
   wd->cursor_image_index = 0;
 }
 
+static GdkWaylandDeviceTabletPair *
+gdk_wayland_device_find_tablet_pair (GdkWaylandDeviceData *wd,
+                                     GdkDevice            *device)
+{
+  GdkWaylandDeviceManager *device_manager =
+    GDK_WAYLAND_DEVICE_MANAGER (wd->device_manager);
+  GList *l;
+
+  for (l = device_manager->tablet_pairs; l; l = l->next)
+    {
+      GdkWaylandDeviceTabletPair *pair = l->data;
+
+      if (pair->master == device)
+        return pair;
+    }
+
+  return NULL;
+}
+
 static gboolean
-gdk_wayland_device_update_window_cursor (GdkWaylandDeviceData *wd)
+gdk_wayland_device_update_window_cursor (GdkDevice *device)
 {
   struct wl_buffer *buffer;
   int x, y, w, h, scale;
   guint next_image_index, next_image_delay;
   struct wl_surface *surface;
+  GdkWaylandDeviceData *wd;
+
+  wd = GDK_WAYLAND_DEVICE (device)->device;
 
   if (wd->grab_cursor)
     {
@@ -276,28 +296,29 @@ gdk_wayland_device_update_window_cursor (GdkWaylandDeviceData *wd)
       return TRUE;
     }
 
-  if (!wd->wl_cursor_device)
-    return FALSE;
-
-  if (wd->wl_cursor_device == wd->wl_pointer)
+  if (device == wd->master_pointer)
     {
       surface = wd->pointer_cursor_surface;
 
       wl_pointer_set_cursor (wd->wl_pointer,
-                             wd->enter_serial,
-                             wd->pointer_cursor_surface,
+                             wd->enter_serial, surface,
                              x, y);
     }
   else
     {
       GdkWaylandDeviceTabletPair *device_pair =
-        wl_tablet_get_user_data (wd->wl_cursor_device);
+        gdk_wayland_device_find_tablet_pair (wd, device);
+
+      if (!device_pair)
+        {
+          wd->cursor_timeout_id = 0;
+          return TRUE;
+        }
 
       surface = device_pair->cursor_surface;
 
-      wl_tablet_set_cursor (wd->wl_cursor_device,
-                            wd->enter_serial,
-                            device_pair->cursor_surface,
+      wl_tablet_set_cursor (device_pair->wl_tablet,
+                            wd->enter_serial, surface,
                             x, y);
     }
 
@@ -325,7 +346,7 @@ gdk_wayland_device_update_window_cursor (GdkWaylandDeviceData *wd)
       /* Queue timeout for next frame */
       id = g_timeout_add (next_image_delay,
                           (GSourceFunc)gdk_wayland_device_update_window_cursor,
-                          wd);
+                          device);
       g_source_set_name_by_id (id, "[gtk+] gdk_wayland_device_update_window_cursor");
 
       wd->cursor_timeout_id = id;
@@ -335,47 +356,6 @@ gdk_wayland_device_update_window_cursor (GdkWaylandDeviceData *wd)
     wd->cursor_timeout_id = 0;
 
   return FALSE;
-}
-
-static void
-gdk_wayland_device_set_blank_cursor (GdkWaylandDeviceData *wd,
-                                     gpointer              cursor_device)
-{
-  int x, y, w, h, scale;
-  struct wl_surface *surface;
-
-  if (wd->grab_cursor)
-    {
-      _gdk_wayland_cursor_get_buffer (wd->grab_cursor, 0,
-                                      &x, &y, &w, &h, &scale);
-    }
-  else if (wd->cursor)
-    {
-      _gdk_wayland_cursor_get_buffer (wd->cursor, wd->cursor_image_index,
-                                      &x, &y, &w, &h, &scale);
-    }
-  else
-    return;
-
-  if (cursor_device == wd->wl_pointer)
-    surface = wd->pointer_cursor_surface;
-  else
-    {
-      GdkWaylandDeviceTabletPair *device_pair =
-        wl_tablet_get_user_data (cursor_device);
-
-      surface = device_pair->cursor_surface;
-    }
-
-  wl_surface_attach (surface, NULL, 0, 0);
-  wl_surface_set_buffer_scale (surface, scale);
-  wl_surface_damage (surface, 0, 0, w, h);
-  wl_surface_commit (surface);
-
-  if (cursor_device == wd->wl_pointer)
-    wl_pointer_set_cursor (cursor_device, wd->enter_serial, surface, 0, 0);
-  else
-    wl_tablet_set_cursor (cursor_device, wd->enter_serial, surface, 0, 0);
 }
 
 static void
@@ -401,21 +381,6 @@ gdk_wayland_mimic_device_axes (GdkDevice *master,
     }
 
   g_object_thaw_notify (G_OBJECT (master));
-}
-
-static void
-gdk_wayland_device_set_cursor_device (GdkWaylandDeviceData *wd,
-                                      gpointer              cursor_device)
-{
-  if (wd->wl_cursor_device == cursor_device)
-    return;
-
-  if (wd->wl_cursor_device)
-    gdk_wayland_device_set_blank_cursor (wd, wd->wl_cursor_device);
-
-  wd->wl_cursor_device = cursor_device;
-
-  gdk_wayland_device_update_window_cursor (wd);
 }
 
 static void
@@ -445,7 +410,7 @@ gdk_wayland_device_set_window_cursor (GdkDevice *device,
 
   wd->cursor = g_object_ref (cursor);
 
-  gdk_wayland_device_update_window_cursor (wd);
+  gdk_wayland_device_update_window_cursor (device);
 }
 
 static void
@@ -561,7 +526,7 @@ gdk_wayland_device_grab (GdkDevice    *device,
       if (cursor)
         wayland_device->grab_cursor = g_object_ref (cursor);
 
-      gdk_wayland_device_update_window_cursor (wayland_device);
+      gdk_wayland_device_update_window_cursor (device);
     }
 
   return GDK_GRAB_SUCCESS;
@@ -590,15 +555,13 @@ gdk_wayland_device_ungrab (GdkDevice *device,
         grab->serial_end = grab->serial_start;
 
       g_clear_object (&wayland_device->grab_cursor);
-      gdk_wayland_device_update_window_cursor (wayland_device);
+      gdk_wayland_device_update_window_cursor (device);
 
       if (wayland_device->pointer_grab_window)
         _gdk_wayland_window_set_device_grabbed (wayland_device->pointer_grab_window,
                                                 NULL,
                                                 NULL,
                                                 0);
-
-      wayland_device->wl_cursor_device_locked = FALSE;
     }
 }
 
@@ -929,12 +892,6 @@ pointer_handle_enter (void              *data,
 
   device->enter_serial = serial;
 
-  if (device->wl_cursor_device_locked)
-    {
-      gdk_wayland_device_set_blank_cursor (device, pointer);
-      return;
-    }
-
   tablet_focus_count =
     gdk_wayland_device_get_tablet_focus_count (device, window);
 
@@ -955,8 +912,7 @@ pointer_handle_enter (void              *data,
   event->crossing.focus = TRUE;
   event->crossing.state = 0;
 
-  if (device->wl_cursor_device == device->wl_pointer)
-    gdk_wayland_device_update_window_cursor (device);
+  gdk_wayland_device_update_window_cursor (device->master_pointer);
 
   get_coordinates (device,
                    &event->crossing.x,
@@ -999,8 +955,7 @@ pointer_handle_leave (void              *data,
   tablet_focus_count =
     gdk_wayland_device_get_tablet_focus_count (device, window);
 
-  if (device->wl_cursor_device == device->wl_pointer)
-    gdk_wayland_device_update_window_cursor (device);
+  gdk_wayland_device_update_window_cursor (device->master_pointer);
 
   if (tablet_focus_count == 0)
     {
@@ -1049,8 +1004,6 @@ pointer_handle_motion (void              *data,
 
   if (!device->pointer_focus)
     return;
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != pointer)
-    return;
 
   event = gdk_event_new (GDK_NOTHING);
 
@@ -1080,7 +1033,7 @@ pointer_handle_motion (void              *data,
             g_message ("motion %d %d, state %d",
                        sx, sy, event->button.state));
 
-  gdk_wayland_device_set_cursor_device (device, device->wl_pointer);
+  gdk_wayland_device_update_window_cursor (device->master_pointer);
 
   _gdk_wayland_display_deliver_event (device->display, event);
 }
@@ -1101,8 +1054,6 @@ pointer_handle_button (void              *data,
   GdkWaylandDisplay *wayland_display =
     GDK_WAYLAND_DISPLAY (device->display);
 
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != pointer)
-    return;
   if (!device->pointer_focus)
     return;
 
@@ -1142,25 +1093,16 @@ pointer_handle_button (void              *data,
 
   modifier = 1 << (8 + gdk_button - 1);
   if (state)
-    {
-      device->modifiers |= modifier;
-      device->wl_cursor_device_locked = TRUE;
-    }
+    device->modifiers |= modifier;
   else
-    {
-      device->modifiers &= ~modifier;
-
-      /* Check if any button modifiers are currently set */
-      if (!(device->modifiers & 0x1F00))
-        device->wl_cursor_device_locked = FALSE;
-    }
+    device->modifiers &= ~modifier;
 
   GDK_NOTE (EVENTS,
 	    g_message ("button %d %s, state %d",
 		       event->button.button,
 		       state ? "press" : "release", event->button.state));
 
-  gdk_wayland_device_set_cursor_device (device, device->wl_pointer);
+  gdk_wayland_device_update_window_cursor (device->master_pointer);
 
   _gdk_wayland_display_deliver_event (device->display, event);
 }
@@ -1178,8 +1120,6 @@ pointer_handle_axis (void              *data,
   gdouble delta_x, delta_y;
 
   if (!device->pointer_focus)
-    return;
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != pointer)
     return;
 
   /* get the delta and convert it into the expected range */
@@ -1932,9 +1872,6 @@ tablet_handle_proximity_in (void                  *data,
   _gdk_wayland_display_update_serial (wayland_display, serial);
   device->enter_serial = serial;
 
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
-    gdk_wayland_device_set_blank_cursor (device, wl_tablet);
-
   device_pair->focus = g_object_ref (window);
   device_pair->current_device =
     tablet_select_device_for_tool (device_pair, tool);
@@ -1960,8 +1897,7 @@ tablet_handle_proximity_in (void                  *data,
 
   _gdk_wayland_display_deliver_event (device->display, event);
 
-  if (device->wl_cursor_device == wl_tablet)
-    gdk_wayland_device_update_window_cursor (device);
+  gdk_wayland_device_update_window_cursor (device_pair->master);
 
   /* If we're the first cursor on the surface and we need to send an enter
    * event, we can't send one until we get the coordinates for it in the next
@@ -1983,7 +1919,6 @@ tablet_handle_proximity_out (void             *data,
 {
   GdkWaylandDeviceTabletPair *device_pair = data;
   GdkWaylandDeviceData *device = device_pair->wd;
-  GdkWaylandDisplay *display = GDK_WAYLAND_DISPLAY (device->display);
   GdkEvent *event;
   guint tablet_focus_count;
 
@@ -2000,8 +1935,7 @@ tablet_handle_proximity_out (void             *data,
 
   _gdk_wayland_display_deliver_event (device->display, event);
 
-  if (device->wl_cursor_device == wl_tablet)
-    gdk_wayland_device_update_window_cursor (device);
+  gdk_wayland_device_update_window_cursor (device_pair->master);
 
   /* Check if there are any other tablets present on the surface, or if the
    * mouse is still on the surface. If nothing's on the surface, sent a
@@ -2036,36 +1970,8 @@ tablet_handle_proximity_out (void             *data,
       if (device->cursor)
         gdk_wayland_device_stop_window_cursor_animation (device);
     }
-  else if (device->pointer_focus == device_pair->focus)
-    {
-      /* Send a motion event with the current cursor coordinates so the
-       * appropriate widgets and the cursor image update */
-      device->surface_x = device->pointer_x;
-      device->surface_y = device->pointer_y;
 
-      event = gdk_event_new (GDK_MOTION_NOTIFY);
-      event->motion.window = g_object_ref (device_pair->focus);
-      gdk_event_set_device (event, device_pair->master);
-      gdk_event_set_source_device (event, device->pointer);
-      event->motion.time = time;
-      event->motion.axes = NULL;
-      event->motion.state = device->modifiers;
-      event->motion.is_hint = 0;
-      gdk_event_set_screen (event, display->screen);
-
-      gdk_wayland_device_set_cursor_device (device, device->wl_pointer);
-
-      get_coordinates (device,
-                       &event->motion.x,
-                       &event->motion.y,
-                       &event->motion.x_root,
-                       &event->motion.y_root);
-
-      _gdk_wayland_display_deliver_event (device->display, event);
-    }
-  else
-    gdk_wayland_device_set_cursor_device (device, NULL);
-
+  gdk_wayland_device_update_window_cursor (device_pair->master);
   gdk_wayland_device_decrement_tablet_focus (device, device_pair->focus);
   g_object_unref (device_pair->focus);
   device_pair->focus = NULL;
@@ -2083,8 +1989,6 @@ tablet_handle_motion (void             *data,
 
   if (!device_pair->focus)
     return;
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
-    return;
 
   device->time = time;
   device->surface_x = wl_fixed_to_double (sx);
@@ -2101,9 +2005,6 @@ tablet_handle_pressure (void             *data,
   GdkWaylandDeviceData *device = device_pair->wd;
   gint axis_index = device_pair->pressure_axis_index;
 
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
-    return;
-
   device->time = time;
   _gdk_device_translate_axis (device_pair->current_device, axis_index,
                               wl_fixed_to_double (pressure),
@@ -2119,9 +2020,6 @@ tablet_handle_distance (void             *data,
   GdkWaylandDeviceTabletPair *device_pair = data;
   GdkWaylandDeviceData *device = device_pair->wd;
   gint axis_index = device_pair->distance_axis_index;
-
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
-    return;
 
   device->time = time;
   _gdk_device_translate_axis (device_pair->current_device, axis_index,
@@ -2140,9 +2038,6 @@ tablet_handle_tilt (void             *data,
   GdkWaylandDeviceData *device = device_pair->wd;
   gint xtilt_axis_index = device_pair->xtilt_axis_index;
   gint ytilt_axis_index = device_pair->ytilt_axis_index;
-
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
-    return;
 
   device->time = time;
   _gdk_device_translate_axis (device_pair->current_device, xtilt_axis_index,
@@ -2163,8 +2058,6 @@ tablet_handle_frame (void             *data,
 
   if (!device_pair->focus)
     return;
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
-    return;
 
   if (device->tablet_cursor_enter_event_needed)
     {
@@ -2181,8 +2074,7 @@ tablet_handle_frame (void             *data,
       event->crossing.focus = TRUE;
       event->crossing.state = 0;
 
-      if (device->wl_cursor_device == device->wl_pointer)
-        gdk_wayland_device_update_window_cursor (device);
+      gdk_wayland_device_update_window_cursor (device_pair->master);
 
       get_coordinates (device,
                        &event->crossing.x,
@@ -2220,7 +2112,7 @@ tablet_handle_frame (void             *data,
                            device->surface_x, device->surface_y,
                            event->button.state));
 
-      gdk_wayland_device_set_cursor_device (device, wl_tablet);
+      gdk_wayland_device_update_window_cursor (device_pair->master);
     }
 
   _gdk_wayland_display_deliver_event (device->display, event);
@@ -2237,8 +2129,6 @@ tablet_handle_down (void             *data,
   GdkWaylandDisplay *wayland_display = GDK_WAYLAND_DISPLAY (device->display);
   GdkEvent *event;
 
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
-    return;
   if (!device_pair->focus)
     return;
 
@@ -2269,8 +2159,7 @@ tablet_handle_down (void             *data,
             g_message ("button %d %s, state %d",
                        event->button.button, "press", event->button.state));
 
-  gdk_wayland_device_set_cursor_device (device, wl_tablet);
-  device->wl_cursor_device_locked = TRUE;
+  gdk_wayland_device_update_window_cursor (device_pair->master);
 
   _gdk_wayland_display_deliver_event (device->display, event);
 }
@@ -2286,8 +2175,6 @@ tablet_handle_up (void             *data,
   GdkEvent *event;
   guint32 time;
 
-  if (device->wl_cursor_device_locked && device->wl_cursor_device != wl_tablet)
-    return;
   if (!device_pair->focus)
     return;
 
@@ -2315,10 +2202,6 @@ tablet_handle_up (void             *data,
                    &event->button.y_root);
 
   device->modifiers &= ~GDK_BUTTON1_MASK;
-
-  /* Check if any of the button modifiers are currently set */
-  if (!(device->modifiers & 0x1F00))
-    device->wl_cursor_device_locked = FALSE;
 
   _gdk_wayland_display_deliver_event (device->display, event);
 }
