@@ -1957,7 +1957,6 @@ tablet_handle_proximity_in (void                  *data,
   gdk_wayland_device_tablet_clone_tool_axes (device_pair, wayland_tool);
 
   event = gdk_event_new (GDK_PROXIMITY_IN);
-  event->proximity.type = GDK_PROXIMITY_IN;
   event->proximity.window = g_object_ref (device_pair->focus);
   gdk_event_set_device (event, device->master_pointer);
   gdk_event_set_source_device (event, device_pair->current_device);
