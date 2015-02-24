@@ -1457,6 +1457,9 @@ multipress_gesture_pressed_cb (GtkGestureMultiPress *gesture,
 
   event_widget = gtk_get_event_widget ((GdkEvent*) event);
 
+  if (region == GTK_WINDOW_REGION_TITLE)
+    gdk_window_raise (gtk_widget_get_window (widget));
+
   switch (region)
     {
     case GTK_WINDOW_REGION_CONTENT:
@@ -6323,7 +6326,7 @@ popover_realize (GtkWidget        *widget,
   if (GDK_IS_WAYLAND_DISPLAY (gtk_widget_get_display (widget)))
     {
       attributes.window_type = GDK_WINDOW_SUBSURFACE;
-      parent_window = gdk_screen_get_root_window (gtk_widget_get_screen (widget));
+      parent_window = gdk_screen_get_root_window (gtk_widget_get_screen (GTK_WIDGET (window)));
     }
   else
 #endif
@@ -7003,7 +7006,7 @@ gtk_window_realize (GtkWidget *widget)
   /* We don't need to set a background on the GdkWindow; with decorations
    * we draw the background ourself
    */
-  if (!priv->client_decorated)
+  if (!priv->client_decorated && !gtk_widget_get_app_paintable (widget))
     gtk_style_context_set_background (gtk_widget_get_style_context (widget), gdk_window);
 
   attributes.x = allocation.x;

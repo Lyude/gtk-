@@ -1,5 +1,74 @@
+Overview of Changes in GTK+ 3.15.8
+==================================
+
+* CSS
+ - Support animated font weight changes
+
+* GtkScrolledWindow:
+ - Ensure indicators appear in the correct place
+
+* Wayland:
+ - DND fixes
+
+* GtkPopover:
+ - has a map/unmap animation now
+
+* Bugs fixed:
+ 743647 image-missing is missing from libgtk's resources
+ 744054 Clarify documentation for event propagation a...
+ 744683 Tooltips should have ATK_ROLE_TOOL_TIP (like ...
+
+* Translation updates
+ Galician
+ Hebrew
+ Hungarian
+ Italian
+ Norwegian bokmål
+ Punjabi
+ Slovenian
+ Spanish
+
+
+Overview of Changes in GTK+ 3.15.7
+==================================
+
+* GtkListBox now supports models with gtk_list_box_bind_model
+
+* GtkNotebook has a new function to support tab dnd
+
+* GtkSidebar was renamed to GtkStackSidebar to better convey what it does
+
+* GtkFileChooser now has a location column for search
+
+* GdkGLProfile has been removed
+
+* Bugs
+ 695945 implement minimize / maximize functionality
+ 708320 listbox: Update the cursor row when the row's child gets focus
+ 741946 OpenGL context should allow for GL attribute selection
+ 743350 main: Make gtk_get_option_group() available to bindings
+ 744148 gtk: x: fix compilation without x11 backend
+ 744172 Wayland: Clients won't work on compositors that support wl_seat < 4
+ 744204 File chooser in gedit try to open directory instead of navigatin...
+ 744394 GtkGLArea documentation does not reflect changes in the api
+ 744400 Add specific CSS class for the close/minimize/maximize button
+ 744407 Can't support core 3.2 gl context on llvmpipe
+ 744455 wayland: Update to xdg-shell unstable v5
+
+* Translation updates:
+ Hungarian
+ Norwegian bokmål
+ Slovenian
+ Spanish
+ Turkish
+
+
 Overview of Changes in GTK+ 3.15.5
 ==================================
+
+* GTK+ types now support the GLib g_autoptr() facility for
+  automatic cleanup of automatic variables. GTK+ itself does
+  not use g_autoptr() internally.
 
 * GtkSearchEntry has gained ::next-match, ::previous-match
   and ::stop-search signals and a gtk_search_entry_handle_event()
@@ -12,8 +81,22 @@ Overview of Changes in GTK+ 3.15.5
    in addition to the Alt-S shortcut.
  - The file chooser button now accepts files by drag-and-drop properly.
 
+* GtkScrolledWindow has gained a new ::edge-reached signal, which
+  triggers when the edge of the scrollable area is reached.
+
 * CSS:
  - Performance improvements
+
+* OpenGL:
+ - It is now possible to specify the required GL version, as well
+   as some other options (debug, forward compatible) when creating
+   a GdkGLContext
+ - Support for the OpenGL legacy profile has been dropped. Most examples
+   have been updated, with the exception of gdkgears, which will be fixed
+   in the next snapshot
+ - Use shader version 1.50
+
+* Mir backend: Many improvements
 
 * Bugs fixed:
  712752 GtkClipboard: add _get_default and _get_primary
@@ -42,11 +125,28 @@ Overview of Changes in GTK+ 3.15.5
  743659 All folders hidden after returning from search mode in GtkFileCh...
  743660 Pressing Ctrl should not start a search in the file chooser
  743680 getting-started: update Basics section to correspond to example-...
+ 613833 Unnecessary queue_resize() for GtkImage
+ 741946 OpenGL context should allow for GL attribute selection
+ 742566 Bitfield structure members used for booleans
+ 742848 scrolledwindow: should emit edge-overshot when scrollbar reaches end
+ 743395 Regression in gnome-terminal starting with gtk commit 27285f1 ' ...
+ 743640 add __attribute__((cleanup)) support
+ 743770 Memory leak in plugman example
+ 743894 don't trigger interactive overlay scrollbar when drag-selecting
+ 743917 Gtk modules must be compatible with both gtk 2 and 3
+ 743975 Better deprecation information for GtkStatusIcon
+ 744203 gdkgl shaders use depricated GLSL version
+ 744212 gdk_gl_context_set_required_version() interprets requests for 4...
 
 * Translation updates:
  Hebrew
  Hungarian
  Icelandic
+ Lithuanian
+ Norwegian bokmål
+ Russian
+ Slovak
+ Spanish
 
 
 Overview of Changes in GTK+ 3.15.4

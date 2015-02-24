@@ -12,6 +12,7 @@ gdk/gdkpango.c
 gdk/gdkscreen.c
 gdk/gdkwindow.c
 gdk/keyname-table.h
+gdk/mir/gdkmirglcontext.c
 gdk/mir/gdkmirwindowimpl.c
 gdk/wayland/gdkglcontext-wayland.c
 gdk/win32/gdkglcontext-win32.c
@@ -149,6 +150,7 @@ gtk/gtkfontchooserdialog.c
 gtk/gtkfontchooserwidget.c
 gtk/gtkframe.c
 gtk/gtkgesture.c
+gtk/gtkgesturelongpress.c
 gtk/gtkgesturepan.c
 gtk/gtkgesturesingle.c
 gtk/gtkglarea.c
@@ -229,7 +231,7 @@ gtk/gtkselection.c
 gtk/gtkseparator.c
 gtk/gtkseparatortoolitem.c
 gtk/gtksettings.c
-gtk/gtksidebar.c
+gtk/gtkstacksidebar.c
 gtk/gtksizegroup.c
 gtk/gtksocket.c
 gtk/gtkspinbutton.c

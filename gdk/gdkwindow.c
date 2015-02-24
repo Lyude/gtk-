@@ -2742,7 +2742,6 @@ gdk_window_get_paint_gl_context (GdkWindow  *window,
       window->impl_window->gl_paint_context =
         GDK_WINDOW_IMPL_GET_CLASS (window->impl)->create_gl_context (window->impl_window,
                                                                      TRUE,
-                                                                     GDK_GL_PROFILE_DEFAULT,
                                                                      NULL,
                                                                      &internal_error);
     }
@@ -2768,7 +2767,6 @@ gdk_window_get_paint_gl_context (GdkWindow  *window,
 /**
  * gdk_window_create_gl_context:
  * @window: a #GdkWindow
- * @profile: the GL profile the context should target
  * @error: return location for an error
  *
  * Creates a new #GdkGLContext matching the
@@ -2778,7 +2776,7 @@ gdk_window_get_paint_gl_context (GdkWindow  *window,
  * If the creation of the #GdkGLContext failed, @error will be set.
  *
  * Before using the returned #GdkGLContext, you will need to
- * call gdk_gl_context_make_current().
+ * call gdk_gl_context_make_current() or gdk_gl_context_realize().
  *
  * Returns: (transfer full): the newly created #GdkGLContext, or
  * %NULL on error
@@ -2787,7 +2785,6 @@ gdk_window_get_paint_gl_context (GdkWindow  *window,
  **/
 GdkGLContext *
 gdk_window_create_gl_context (GdkWindow    *window,
-                              GdkGLProfile  profile,
                               GError      **error)
 {
   GdkGLContext *paint_context;
@@ -2801,7 +2798,6 @@ gdk_window_create_gl_context (GdkWindow    *window,
 
   return GDK_WINDOW_IMPL_GET_CLASS (window->impl)->create_gl_context (window->impl_window,
 								      FALSE,
-                                                                      profile,
                                                                       paint_context,
                                                                       error);
 }
@@ -3909,10 +3905,10 @@ gdk_window_process_updates (GdkWindow *window,
 {
   g_return_if_fail (GDK_IS_WINDOW (window));
 
-  return gdk_window_process_updates_with_mode (window,
-                                               update_children ?
-                                               PROCESS_UPDATES_WITH_ALL_CHILDREN :
-                                               PROCESS_UPDATES_NO_RECURSE);
+  gdk_window_process_updates_with_mode (window,
+                                        update_children ?
+                                        PROCESS_UPDATES_WITH_ALL_CHILDREN :
+                                        PROCESS_UPDATES_NO_RECURSE);
 }
 
 static void
@@ -5429,6 +5425,8 @@ gdk_window_withdraw (GdkWindow *window)
  * including #GDK_BUTTON_PRESS_MASK means the window should report button
  * press events. The event mask is the bitwise OR of values from the
  * #GdkEventMask enumeration.
+ *
+ * See the [input handling overview][event-masks] for details.
  **/
 void
 gdk_window_set_events (GdkWindow       *window,
@@ -5498,6 +5496,8 @@ gdk_window_get_events (GdkWindow *window)
  * including #GDK_BUTTON_PRESS_MASK means the window should report button
  * press events. The event mask is the bitwise OR of values from the
  * #GdkEventMask enumeration.
+ *
+ * See the [input handling overview][event-masks] for details.
  *
  * Since: 3.0
  **/
@@ -11127,7 +11127,7 @@ gdk_window_set_opaque_region (GdkWindow      *window,
   impl_class = GDK_WINDOW_IMPL_GET_CLASS (window->impl);
 
   if (impl_class->set_opaque_region)
-    return impl_class->set_opaque_region (window, region);
+    impl_class->set_opaque_region (window, region);
 }
 
 /**

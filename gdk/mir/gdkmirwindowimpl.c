@@ -1392,16 +1392,12 @@ find_eglconfig_for_window (GdkWindow  *window,
 static GdkGLContext *
 gdk_mir_window_impl_create_gl_context (GdkWindow     *window,
                                        gboolean       attached,
-                                       GdkGLProfile   profile,
                                        GdkGLContext  *share,
                                        GError       **error)
 {
   GdkDisplay *display = gdk_window_get_display (window);
   GdkMirGLContext *context;
-  EGLContext ctx;
   EGLConfig config;
-  int i;
-  EGLint context_attribs[3];
 
   if (!_gdk_mir_display_init_egl_display (display))
     {
@@ -1411,11 +1407,7 @@ gdk_mir_window_impl_create_gl_context (GdkWindow     *window,
       return NULL;
     }
 
-  if (profile == GDK_GL_PROFILE_DEFAULT)
-    profile = GDK_GL_PROFILE_LEGACY;
-
-  if (profile == GDK_GL_PROFILE_3_2_CORE &&
-      !_gdk_mir_display_have_egl_khr_create_context (display))
+  if (!_gdk_mir_display_have_egl_khr_create_context (display))
     {
       g_set_error_literal (error, GDK_GL_ERROR,
                            GDK_GL_ERROR_UNSUPPORTED_PROFILE,
@@ -1426,38 +1418,13 @@ gdk_mir_window_impl_create_gl_context (GdkWindow     *window,
   if (!find_eglconfig_for_window (window, &config, error))
     return NULL;
 
-  i = 0;
-  if (profile == GDK_GL_PROFILE_3_2_CORE)
-    {
-      context_attribs[i++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
-      context_attribs[i++] = EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR;
-    }
-  context_attribs[i++] = EGL_NONE;
-
-  ctx = eglCreateContext (_gdk_mir_display_get_egl_display (display),
-                          config,
-                          share ? GDK_MIR_GL_CONTEXT (share)->egl_context : EGL_NO_CONTEXT,
-                          context_attribs);
-  if (ctx == NULL)
-    {
-      g_set_error_literal (error, GDK_GL_ERROR,
-                           GDK_GL_ERROR_NOT_AVAILABLE,
-                           _("Unable to create a GL context"));
-      return NULL;
-    }
-
-  GDK_NOTE (OPENGL,
-            g_print ("Created EGL context[%p]\n", ctx));
-
   context = g_object_new (GDK_TYPE_MIR_GL_CONTEXT,
                           "display", display,
                           "window", window,
-                          "profile", profile,
                           "shared-context", share,
                           NULL);
 
   context->egl_config = config;
-  context->egl_context = ctx;
   context->is_attached = attached;
 
   return GDK_GL_CONTEXT (context);

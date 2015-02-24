@@ -26,6 +26,8 @@ IGNORE_HFILES=				\
 	gtkactionobservable.h		\
 	gtk9slice.h			\
 	gtkanimationdescription.h	\
+	gtkdbusgenerated.c		\
+	gtkdbusgenerated.h		\
 	gtkdebug.h			\
 	gtkactionhelper.h		\
 	gtkapplicationprivate.h		\
@@ -172,6 +174,7 @@ expand_content_files = 				\
 	drawing-model.xml			\
 	getting_started.xml			\
 	glossary.xml				\
+	input-handling.xml			\
 	migrating-2to3.xml			\
 	migrating-checklist.sgml		\
 	migrating-unique-GtkApplication.xml	\

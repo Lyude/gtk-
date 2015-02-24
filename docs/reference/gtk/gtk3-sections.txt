@@ -550,12 +550,13 @@ gtk_list_box_set_header_func
 gtk_list_box_set_sort_func
 gtk_list_box_drag_highlight_row
 gtk_list_box_drag_unhighlight_row
+GtkListBoxCreateWidgetFunc
+gtk_list_box_bind_model
 
 gtk_list_box_row_new
 gtk_list_box_row_changed
 gtk_list_box_row_is_selected
 gtk_list_box_row_get_header
-gtk_list_box_row_get_type
 gtk_list_box_row_set_header
 gtk_list_box_row_get_index
 gtk_list_box_row_set_activatable
@@ -2483,6 +2484,7 @@ gtk_notebook_prepend_page_menu
 gtk_notebook_insert_page
 gtk_notebook_insert_page_menu
 gtk_notebook_remove_page
+gtk_notebook_detach_tab
 gtk_notebook_page_num
 gtk_notebook_next_page
 gtk_notebook_prev_page
@@ -7963,6 +7965,8 @@ gtk_popover_set_position
 gtk_popover_get_position
 gtk_popover_set_modal
 gtk_popover_get_modal
+gtk_popover_set_transitions_enabled
+gtk_popover_get_transitions_enabled
 <SUBSECTION Private>
 gtk_popover_get_type
 </SECTION>
@@ -8211,24 +8215,24 @@ gtk_gesture_zoom_get_type
 </SECTION>
 
 <SECTION>
-<FILE>gtksidebar</FILE>
-GtkSidebar
-GtkSidebarClass
-gtk_sidebar_new
-gtk_sidebar_set_stack
-gtk_sidebar_get_stack
+<FILE>gtkstacksidebar</FILE>
+GtkStackSidebar
+GtkStackSidebarClass
+gtk_stack_sidebar_new
+gtk_stack_sidebar_set_stack
+gtk_stack_sidebar_get_stack
 
 <SUBSECTION Standard>
 GTK_TYPE_SIDEBAR
-GTK_SIDEBAR
-GTK_SIDEBAR_CLASS
+GTK_STACK_SIDEBAR
+GTK_STACK_SIDEBAR_CLASS
 GTK_IS_SIDEBAR
 GTK_IS_SIDEBAR_CLASS
-GTK_SIDEBAR_GET_CLASS
+GTK_STACK_SIDEBAR_GET_CLASS
 
 <SUBSECTION Private>
-GtkSidebarPrivate
-gtk_sidebar_get_type
+GtkStackSidebarPrivate
+gtk_stack_sidebar_get_type
 </SECTION>
 
 <SECTION>
@@ -8241,8 +8245,6 @@ gtk_gl_area_make_current
 gtk_gl_area_queue_render
 gtk_gl_area_set_error
 gtk_gl_area_get_error
-gtk_gl_area_set_profile
-gtk_gl_area_get_profile
 <SUBSECTION>
 gtk_gl_area_set_has_alpha
 gtk_gl_area_get_has_alpha

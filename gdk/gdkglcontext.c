@@ -91,10 +91,10 @@ typedef struct {
   GdkDisplay *display;
   GdkWindow *window;
   GdkGLContext *shared_context;
-  GdkGLProfile profile;
 
   int major;
   int minor;
+  int gl_version;
 
   guint realized : 1;
   guint use_texture_rectangle : 1;
@@ -112,7 +112,6 @@ enum {
 
   PROP_DISPLAY,
   PROP_WINDOW,
-  PROP_PROFILE,
   PROP_SHARED_CONTEXT,
 
   LAST_PROP
@@ -200,10 +199,6 @@ gdk_gl_context_set_property (GObject      *gobject,
       }
       break;
 
-    case PROP_PROFILE:
-      priv->profile = g_value_get_enum (value);
-      break;
-
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
     }
@@ -229,10 +224,6 @@ gdk_gl_context_get_property (GObject    *gobject,
 
     case PROP_SHARED_CONTEXT:
       g_value_set_object (value, priv->shared_context);
-      break;
-
-    case PROP_PROFILE:
-      g_value_set_enum (value, priv->profile);
       break;
 
     default:
@@ -292,23 +283,6 @@ gdk_gl_context_class_init (GdkGLContextClass *klass)
                          G_PARAM_READWRITE |
                          G_PARAM_CONSTRUCT_ONLY |
                          G_PARAM_STATIC_STRINGS);
-
-  /**
-   * GdkGLContext:profile:
-   *
-   * The #GdkGLProfile of the context
-   *
-   * Since: 3.16
-   */
-  obj_pspecs[PROP_PROFILE] =
-    g_param_spec_enum ("profile",
-                       P_("Profile"),
-                       P_("The GL profile the context was created for"),
-                       GDK_TYPE_GL_PROFILE,
-                       GDK_GL_PROFILE_DEFAULT,
-                       G_PARAM_READWRITE |
-                       G_PARAM_CONSTRUCT_ONLY |
-                       G_PARAM_STATIC_STRINGS);
 
   /**
    * GdkGLContext:shared-context:
@@ -618,6 +592,8 @@ gdk_gl_context_check_extensions (GdkGLContext *context)
   if (priv->extensions_checked)
     return;
 
+  priv->gl_version = epoxy_gl_version ();
+
   has_npot = epoxy_has_gl_extension ("GL_ARB_texture_non_power_of_two");
   has_texture_rectangle = epoxy_has_gl_extension ("GL_ARB_texture_rectangle");
 
@@ -634,12 +610,14 @@ gdk_gl_context_check_extensions (GdkGLContext *context)
     g_warning ("GL implementation doesn't support any form of non-power-of-two textures");
 
   GDK_NOTE (OPENGL,
-            g_print ("Extensions checked:\n"
+            g_print ("OpenGL version: %d.%d\n"
+                     "Extensions checked:\n"
                      " - GL_ARB_texture_non_power_of_two: %s\n"
                      " - GL_ARB_texture_rectangle: %s\n"
                      " - GL_EXT_framebuffer_blit: %s\n"
                      " - GL_GREMEDY_frame_terminator: %s\n"
                      "Using texture rectangle: %s\n",
+                     priv->gl_version / 10, priv->gl_version % 10,
                      has_npot ? "yes" : "no",
                      has_texture_rectangle ? "yes" : "no",
                      priv->has_gl_framebuffer_blit ? "yes" : "no",
@@ -731,26 +709,6 @@ gdk_gl_context_get_window (GdkGLContext *context)
 }
 
 /**
- * gdk_gl_context_get_profile:
- * @context: a #GdkGLContext
- *
- * Retrieves the #GdkGLProfile that @context was created for.
- *
- * Returns: a #GdkGLProfile
- *
- * Since: 3.16
- */
-GdkGLProfile
-gdk_gl_context_get_profile (GdkGLContext *context)
-{
-  GdkGLContextPrivate *priv = gdk_gl_context_get_instance_private (context);
-
-  g_return_val_if_fail (GDK_IS_GL_CONTEXT (context), GDK_GL_PROFILE_DEFAULT);
-
-  return priv->profile;
-}
-
-/**
  * gdk_gl_context_get_shared_context:
  * @context: a #GdkGLContext
  *
@@ -768,6 +726,34 @@ gdk_gl_context_get_shared_context (GdkGLContext *context)
   g_return_val_if_fail (GDK_IS_GL_CONTEXT (context), NULL);
 
   return priv->shared_context;
+}
+
+/**
+ * gdk_gl_context_get_version:
+ * @context: a #GdkGLContext
+ * @major: (out): return location for the major version
+ * @minor: (out): return location for the minor version
+ *
+ * Retrieves the OpenGL version of the @context.
+ *
+ * The @context must be realized prior to calling this function.
+ *
+ * Since: 3.16
+ */
+void
+gdk_gl_context_get_version (GdkGLContext *context,
+                            int          *major,
+                            int          *minor)
+{
+  GdkGLContextPrivate *priv = gdk_gl_context_get_instance_private (context);
+
+  g_return_if_fail (GDK_IS_GL_CONTEXT (context));
+  g_return_if_fail (priv->realized);
+
+  if (major != NULL)
+    *major = priv->gl_version / 10;
+  if (minor != NULL)
+    *minor = priv->gl_version % 10;
 }
 
 /**
