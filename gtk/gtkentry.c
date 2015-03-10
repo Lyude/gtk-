@@ -3626,8 +3626,8 @@ get_text_area_size (GtkEntry *entry,
 
   class = GTK_ENTRY_GET_CLASS (entry);
 
-  if (class->get_text_area_size)
-    class->get_text_area_size (entry, x, y, width, height);
+  g_assert (class->get_text_area_size != NULL);
+  class->get_text_area_size (entry, x, y, width, height);
 }
 
 
@@ -3704,8 +3704,8 @@ get_frame_size (GtkEntry *entry,
 
   class = GTK_ENTRY_GET_CLASS (entry);
 
-  if (class->get_frame_size)
-    class->get_frame_size (entry, x, y, width, height);
+  g_assert (class->get_frame_size != NULL);
+  class->get_frame_size (entry, x, y, width, height);
 
   if (!relative_to_window)
     {
@@ -7437,7 +7437,10 @@ gtk_entry_clear (GtkEntry             *entry,
   EntryIconInfo *icon_info = priv->icons[icon_pos];
   GtkImageType storage_type;
 
-  if (icon_info && _gtk_icon_helper_get_is_empty (icon_info->icon_helper))
+  if (icon_info == NULL)
+    return;
+
+  if (_gtk_icon_helper_get_is_empty (icon_info->icon_helper))
     return;
 
   g_object_freeze_notify (G_OBJECT (entry));
@@ -9975,7 +9978,6 @@ gtk_entry_drag_motion (GtkWidget        *widget,
   state = gtk_style_context_get_state (style_context);
   gtk_style_context_get_padding (style_context, state, &padding);
   x -= padding.left;
-  y -= padding.top;
 
   get_icon_allocations (entry, &primary, &secondary);
 
@@ -10054,7 +10056,6 @@ gtk_entry_drag_data_received (GtkWidget        *widget,
   state = gtk_style_context_get_state (style_context);
   gtk_style_context_get_padding (style_context, state, &padding);
   x -= padding.left;
-  y -= padding.top;
 
   get_icon_allocations (entry, &primary, &secondary);
 
@@ -10616,7 +10617,7 @@ gtk_entry_set_progress_fraction (GtkEntry *entry,
   GtkEntryPrivate *private;
   gdouble          old_fraction;
   gint x, y, width, height;
-  gint old_x, old_y, old_width, old_height;
+  gint old_x = 0, old_y = 0, old_width = 0, old_height = 0;
   gboolean was_pulse;
 
   g_return_if_fail (GTK_IS_ENTRY (entry));

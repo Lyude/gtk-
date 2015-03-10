@@ -9685,7 +9685,12 @@ gtk_widget_override_color (GtkWidget     *widget,
  *
  * Since: 3.0
  *
- * Deprecated:3.16: Use a custom style provider and style classes instead
+ * Deprecated: 3.16: This function is not useful in the context of CSS-based
+ *   rendering. If you wish to change the way a widget renders its background
+ *   you should use a custom CSS style, through an application-specific
+ *   #GtkStyleProvider and a CSS style class. You can also override the default
+ *   drawing of a widget through the #GtkWidget::draw signal, and use Cairo to
+ *   draw a specific color, regardless of the CSS style.
  */
 void
 gtk_widget_override_background_color (GtkWidget     *widget,
@@ -9711,7 +9716,10 @@ gtk_widget_override_background_color (GtkWidget     *widget,
  *
  * Since: 3.0
  *
- * Deprecated:3.16: Use a custom style provider and style classes instead
+ * Deprecated: 3.16: This function is not useful in the context of CSS-based
+ *   rendering. If you wish to change the font a widget uses to render its text
+ *   you should use a custom CSS style, through an application-specific
+ *   #GtkStyleProvider and a CSS style class.
  */
 void
 gtk_widget_override_font (GtkWidget                  *widget,
@@ -9741,7 +9749,10 @@ gtk_widget_override_font (GtkWidget                  *widget,
  *
  * Since: 3.0
  *
- * Deprecated:3.16: Use a custom style provider and style classes instead
+ * Deprecated: 3.16: This function is not useful in the context of CSS-based
+ *   rendering. If you wish to change the color used to render symbolic icons
+ *   you should use a custom CSS style, through an application-specific
+ *   #GtkStyleProvider and a CSS style class.
  */
 void
 gtk_widget_override_symbolic_color (GtkWidget     *widget,
@@ -9776,7 +9787,10 @@ gtk_widget_override_symbolic_color (GtkWidget     *widget,
  *
  * Since: 3.0
  *
- * Deprecated:3.16: Use a custom style provider and style classes instead
+ * Deprecated: 3.16: This function is not useful in the context of CSS-based
+ *   rendering. If you wish to change the color used to render the primary
+ *   and seconday cursors you should use a custom CSS style, through an
+ *   application-specific #GtkStyleProvider and a CSS style class.
  */
 void
 gtk_widget_override_cursor (GtkWidget     *widget,
@@ -11445,7 +11459,7 @@ gtk_widget_get_ancestor (GtkWidget *widget,
 /**
  * gtk_widget_set_visual:
  * @widget: a #GtkWidget
- * @visual: visual to be used or %NULL to unset a previous one
+ * @visual: (allow-none): visual to be used or %NULL to unset a previous one
  *
  * Sets the visual that should be used for by widget and its children for
  * creating #GdkWindows. The visual must be on the same #GdkScreen as
@@ -11461,14 +11475,13 @@ gtk_widget_set_visual (GtkWidget *widget,
 {
   g_return_if_fail (GTK_IS_WIDGET (widget));
   g_return_if_fail (visual == NULL || GDK_IS_VISUAL (visual));
+
   if (visual)
-    {
-      g_return_if_fail (gtk_widget_get_screen (widget) == gdk_visual_get_screen (visual));
-    }
+    g_return_if_fail (gtk_widget_get_screen (widget) == gdk_visual_get_screen (visual));
 
   g_object_set_qdata_full (G_OBJECT (widget),
                            quark_visual,
-                           g_object_ref (visual),
+                           visual ? g_object_ref (visual) : NULL,
                            g_object_unref);
 }
 
@@ -17196,8 +17209,8 @@ _gtk_widget_has_controller (GtkWidget          *widget,
 }
 
 void
-_gtk_widget_add_controller (GtkWidget           *widget,
-                            GtkEventController  *controller)
+_gtk_widget_add_controller (GtkWidget          *widget,
+                            GtkEventController *controller)
 {
   EventControllerData *data;
   GtkWidgetPrivate *priv;
@@ -17220,6 +17233,8 @@ _gtk_widget_add_controller (GtkWidget           *widget,
   data->grab_notify_id =
     g_signal_connect (widget, "grab-notify",
                       G_CALLBACK (event_controller_grab_notify), data);
+
+  g_object_add_weak_pointer (G_OBJECT (data->controller), (gpointer *) &data->controller);
 
   if (GTK_IS_GESTURE (controller))
     {
@@ -17246,6 +17261,8 @@ _gtk_widget_remove_controller (GtkWidget          *widget,
 
   if (!data)
     return;
+
+  g_object_remove_weak_pointer (G_OBJECT (data->controller), (gpointer *) &data->controller);
 
   if (g_signal_handler_is_connected (widget, data->grab_notify_id))
     g_signal_handler_disconnect (widget, data->grab_notify_id);
@@ -17277,4 +17294,34 @@ _gtk_widget_list_controllers (GtkWidget           *widget,
     }
 
   return retval;
+}
+
+gboolean
+_gtk_widget_consumes_motion (GtkWidget        *widget,
+                             GdkEventSequence *sequence)
+{
+  EventControllerData *data;
+  GtkWidgetPrivate *priv;
+  GList *l;
+
+  g_return_val_if_fail (GTK_IS_WIDGET (widget), FALSE);
+
+  priv = widget->priv;
+
+  for (l = priv->event_controllers; l; l = l->next)
+    {
+      data = l->data;
+
+      if (data->controller == NULL)
+        continue;
+
+      if ((!GTK_IS_GESTURE_SINGLE (data->controller) ||
+           GTK_IS_GESTURE_DRAG (data->controller) ||
+           GTK_IS_GESTURE_SWIPE (data->controller)) &&
+          gtk_gesture_get_sequence_state (GTK_GESTURE (data->controller),
+                                          sequence) != GTK_EVENT_SEQUENCE_DENIED)
+        return TRUE;
+    }
+
+  return FALSE;
 }

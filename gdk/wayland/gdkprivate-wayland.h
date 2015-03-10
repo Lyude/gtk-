@@ -19,11 +19,11 @@
  * Modified by the GTK+ Team and others 1997-2000.  See the AUTHORS
  * file for a list of people on the GTK+ Team.  See the ChangeLog
  * files for a list of changes.  These files are distributed with
- * GTK+ at ftp://ftp.gtk.org/pub/gtk/. 
+ * GTK+ at ftp://ftp.gtk.org/pub/gtk/.
  */
 
 /*
- * Private uninstalled header defining things local to X windowing code
+ * Private uninstalled header defining things local to the Wayland backend
  */
 
 #ifndef __GDK_PRIVATE_WAYLAND_H__
@@ -221,6 +221,7 @@ cairo_surface_t * _gdk_wayland_display_create_shm_surface (GdkWaylandDisplay *di
 struct wl_buffer *_gdk_wayland_shm_surface_get_wl_buffer (cairo_surface_t *surface);
 void _gdk_wayland_shm_surface_set_busy (cairo_surface_t *surface);
 gboolean _gdk_wayland_shm_surface_get_busy (cairo_surface_t *surface);
+gboolean _gdk_wayland_is_shm_surface (cairo_surface_t *surface);
 
 GdkWaylandSelection * gdk_wayland_display_get_selection (GdkDisplay *display);
 GdkWaylandSelection * gdk_wayland_selection_new (void);

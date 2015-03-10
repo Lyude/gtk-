@@ -10,7 +10,7 @@
 
 m4_define([gtk_major_version], [3])
 m4_define([gtk_minor_version], [15])
-m4_define([gtk_micro_version], [8])
+m4_define([gtk_micro_version], [10])
 m4_define([gtk_interface_age], [0])
 m4_define([gtk_binary_age],
           [m4_eval(100 * gtk_minor_version + gtk_micro_version)])
@@ -146,7 +146,6 @@ AC_PROG_CC_C_O
 AC_PROG_MKDIR_P
 AC_PROG_INSTALL
 AC_PROG_MAKE_SET
-
 
 GETTEXT_PACKAGE=gtk30
 AC_SUBST(GETTEXT_PACKAGE)
@@ -666,6 +665,15 @@ fi
 # i18n stuff
 ALL_LINGUAS="`grep -v '^#' "$srcdir/po/LINGUAS" | tr '\n' ' '`"
 AM_GLIB_GNU_GETTEXT
+
+AC_MSG_CHECKING([whether xgettext supports ui files])
+if $ac_cv_path_XGETTEXT --output=- --language=Glade $srcdir/gtk/ui/gtkfilechooserwidget.ui > /dev/null 2>&1; then
+  AC_MSG_RESULT([yes])
+else
+  AC_MSG_RESULT([no])
+  AC_MSG_ERROR([GNU gettext 0.18.3 or newer is required])
+fi
+
 LIBS="$LIBS $INTLLIBS"
 AC_CONFIG_COMMANDS([po-properties],
                    [[case "$CONFIG_FILES" in *po-properties/Makefile.in*)
@@ -818,7 +826,7 @@ AC_TYPE_UID_T
 
 # Check for round(), rint(), isnan(), isinf() and nearbyint()
 AC_CHECK_LIB(m,round,,)
-AC_CHECK_FUNCS(round rint nearbyint)
+AC_CHECK_FUNCS(round rint nearbyint sincos)
 AC_CHECK_DECLS([isnan, isinf], [], [], [[#include <math.h>]])
 
 # Checks for gdkspawn
@@ -1023,22 +1031,16 @@ if test "x$enable_x11_backend" = xyes; then
   AC_CHECK_FUNC(XextFindDisplay, :,
                 AC_MSG_ERROR([*** libX11 and libXext not found. Check 'config.log' for more details.]))
 
-  # Check for xReply
+  # Check if <X11/extensions/XIproto.h> is needed for xReply.
 
-  AC_MSG_CHECKING([if <X11/extensions/XIproto.h> is needed for xReply])
-  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <X11/Xlibint.h>]],
-                                     [[xReply *rep = NULL;
-                                       rep = rep;]])],
-                    [AC_MSG_RESULT([no])],
-                    [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <X11/extensions/XIproto.h>
-                                                          #include <X11/Xlibint.h>]],
-                                                        [[xReply *rep = NULL;
-                                                          rep = rep;]])],
-                                       [AC_MSG_RESULT([yes])
-                                        AC_DEFINE([NEED_XIPROTO_H_FOR_XREPLY], [1],
-                                                  [Define if <X11/extensions/XIproto.h> needed for xReply])],
-                                       [AC_MSG_RESULT([unknown])
-                                        AC_MSG_ERROR([xReply type unavailable. X11 is too old])])])
+  AC_CHECK_TYPE([xReply], ,
+                [AC_CHECK_TYPE([xReply],
+                               [AC_DEFINE([NEED_XIPROTO_H_FOR_XREPLY], 1,
+                                          [Define if <X11/extensions/XIproto.h> needed for xReply])],
+                               [AC_MSG_ERROR([xReply type unavailable. X11 is too old])],
+                               [[#include <X11/extensions/XIproto.h>
+                                 #include <X11/Xlibint.h>]])],
+                [[#include <X11/Xlibint.h>]])
 
   # Check for XKB support.
 
@@ -1906,7 +1908,6 @@ gtk/makefile.msc
 gtk/gtkversion.h
 gtk/gtk-win32.rc
 gtk/libgtk3.manifest
-util/Makefile
 libgail-util/Makefile
 modules/Makefile
 modules/input/Makefile

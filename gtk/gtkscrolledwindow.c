@@ -1071,6 +1071,12 @@ captured_event_cb (GtkWidget *widget,
   sw = GTK_SCROLLED_WINDOW (widget);
   priv = sw->priv;
 
+  if (event->type == GDK_SCROLL)
+    {
+      gtk_scrolled_window_cancel_deceleration (sw);
+      return GDK_EVENT_PROPAGATE;
+    }
+
   if (!priv->use_indicators)
     return GDK_EVENT_PROPAGATE;
 
@@ -1087,8 +1093,10 @@ captured_event_cb (GtkWidget *widget,
 
   if (event->type == GDK_MOTION_NOTIFY)
     {
-      indicator_start_fade (&priv->hindicator, 1.0);
-      indicator_start_fade (&priv->vindicator, 1.0);
+      if (priv->hscrollbar_visible)
+        indicator_start_fade (&priv->hindicator, 1.0);
+      if (priv->vscrollbar_visible)
+        indicator_start_fade (&priv->vindicator, 1.0);
 
       if ((event->motion.state &
            (GDK_BUTTON1_MASK | GDK_BUTTON2_MASK | GDK_BUTTON3_MASK)) != 0)
@@ -2991,7 +2999,6 @@ gtk_scrolled_window_scroll_event (GtkWidget      *widget,
 
   if (handled)
     {
-      gtk_scrolled_window_cancel_deceleration (scrolled_window);
       gtk_scrolled_window_invalidate_overshoot (scrolled_window);
 
       if (priv->scroll_events_overshoot_id)
@@ -3453,17 +3460,17 @@ gtk_scrolled_window_add_with_viewport (GtkScrolledWindow *scrolled_window,
 /*
  * _gtk_scrolled_window_get_spacing:
  * @scrolled_window: a scrolled window
- * 
+ *
  * Gets the spacing between the scrolled window’s scrollbars and
  * the scrolled widget. Used by GtkCombo
- * 
+ *
  * Returns: the spacing, in pixels.
  */
 static gint
 _gtk_scrolled_window_get_scrollbar_spacing (GtkScrolledWindow *scrolled_window)
 {
   GtkScrolledWindowClass *class;
-    
+
   g_return_val_if_fail (GTK_IS_SCROLLED_WINDOW (scrolled_window), 0);
 
   class = GTK_SCROLLED_WINDOW_GET_CLASS (scrolled_window);
@@ -3473,7 +3480,7 @@ _gtk_scrolled_window_get_scrollbar_spacing (GtkScrolledWindow *scrolled_window)
   else
     {
       gint scrollbar_spacing;
-      
+
       gtk_widget_style_get (GTK_WIDGET (scrolled_window),
 			    "scrollbar-spacing", &scrollbar_spacing,
 			    NULL);
@@ -3530,15 +3537,13 @@ gtk_scrolled_window_get_preferred_size (GtkWidget      *widget,
 	    }
 	  else
 	    {
-              gint min_content_width = priv->min_content_width;
-
-	      if (min_content_width >= 0)
+	      if (priv->min_content_width >= 0)
 		{
-		  minimum_req.width = MAX (minimum_req.width, min_content_width);
-		  natural_req.width = MAX (natural_req.width, min_content_width);
+		  minimum_req.width = MAX (minimum_req.width, priv->min_content_width);
+		  natural_req.width = MAX (natural_req.width, priv->min_content_width);
 		  extra_width = -1;
 		}
-	      else if (policy_may_be_visible (priv->vscrollbar_policy))
+	      else if (policy_may_be_visible (priv->vscrollbar_policy) && !priv->use_indicators)
 		{
 		  minimum_req.width += vscrollbar_requisition.width;
 		  natural_req.width += vscrollbar_requisition.width;
@@ -3558,15 +3563,13 @@ gtk_scrolled_window_get_preferred_size (GtkWidget      *widget,
 	    }
 	  else
 	    {
-	      gint min_content_height = priv->min_content_height;
-
-	      if (min_content_height >= 0)
+	      if (priv->min_content_height >= 0)
 		{
-		  minimum_req.height = MAX (minimum_req.height, min_content_height);
-		  natural_req.height = MAX (natural_req.height, min_content_height);
+		  minimum_req.height = MAX (minimum_req.height, priv->min_content_height);
+		  natural_req.height = MAX (natural_req.height, priv->min_content_height);
 		  extra_height = -1;
 		}
-	      else if (policy_may_be_visible (priv->vscrollbar_policy))
+	      else if (policy_may_be_visible (priv->vscrollbar_policy) && !priv->use_indicators)
 		{
 		  minimum_req.height += vscrollbar_requisition.height;
 		  natural_req.height += vscrollbar_requisition.height;
@@ -3631,7 +3634,7 @@ gtk_scrolled_window_get_preferred_size (GtkWidget      *widget,
     }
 }
 
-static void     
+static void
 gtk_scrolled_window_get_preferred_width (GtkWidget *widget,
                                          gint      *minimum_size,
                                          gint      *natural_size)
@@ -3643,7 +3646,7 @@ static void
 gtk_scrolled_window_get_preferred_height (GtkWidget *widget,
                                           gint      *minimum_size,
                                           gint      *natural_size)
-{  
+{
   gtk_scrolled_window_get_preferred_size (widget, GTK_ORIENTATION_VERTICAL, minimum_size, natural_size);
 }
 
@@ -4039,7 +4042,7 @@ gtk_scrolled_window_realize (GtkWidget *widget)
   attributes.visual = gtk_widget_get_visual (widget);
   attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;
   attributes.event_mask = gtk_widget_get_events (widget) | GDK_EXPOSURE_MASK |
-    GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK;
+    GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK | GDK_POINTER_MOTION_MASK;
 
   window = gdk_window_new (gtk_widget_get_parent_window (widget),
                            &attributes, attributes_mask);
