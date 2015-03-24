@@ -61,6 +61,8 @@ struct _GdkWaylandDeviceTabletPair
   struct wl_surface *cursor_surface;
   GdkWindow *focus;
 
+  gdouble surface_x, surface_y;
+
   gint pressure_axis_index;
   gint xtilt_axis_index;
   gint ytilt_axis_index;
@@ -428,30 +430,27 @@ gdk_wayland_device_warp (GdkDevice *device,
 }
 
 static void
-get_coordinates (GdkWaylandDeviceData *data,
-                 double               *x,
-                 double               *y,
-                 double               *x_root,
-                 double               *y_root)
+get_coordinates (GdkWindow *focus,
+                 double     surface_x,
+                 double     surface_y,
+                 double    *x,
+                 double    *y,
+                 double    *x_root,
+                 double    *y_root)
 {
   int root_x, root_y;
 
   if (x)
-    *x = data->surface_x;
+    *x = surface_x;
   if (y)
-    *y = data->surface_y;
+    *y = surface_y;
 
-  if (data->pointer_focus)
-    {
-      gdk_window_get_root_coords (data->pointer_focus,
-                                  data->surface_x,
-                                  data->surface_y,
-                                  &root_x, &root_y);
-    }
+  if (focus)
+    gdk_window_get_root_coords (focus, surface_x, surface_y, &root_x, &root_y);
   else
     {
-      root_x = data->surface_x;
-      root_y = data->surface_y;
+      root_x = surface_x;
+      root_y = surface_y;
     }
 
   if (x_root)
@@ -484,7 +483,8 @@ gdk_wayland_device_query_state (GdkDevice        *device,
   if (mask)
     *mask = wd->modifiers;
 
-  get_coordinates (wd, win_x, win_y, root_x, root_y);
+  get_coordinates (wd->pointer_focus, wd->surface_x, wd->surface_y,
+                   win_x, win_y, root_x, root_y);
 }
 
 static GdkGrabStatus
@@ -927,7 +927,9 @@ pointer_handle_enter (void              *data,
 
   gdk_wayland_device_update_window_cursor (device->master_pointer);
 
-  get_coordinates (device,
+  get_coordinates (device->pointer_focus,
+                   device->surface_x,
+                   device->surface_y,
                    &event->crossing.x,
                    &event->crossing.y,
                    &event->crossing.x_root,
@@ -982,7 +984,9 @@ pointer_handle_leave (void              *data,
       event->crossing.focus = TRUE;
       event->crossing.state = 0;
 
-      get_coordinates (device,
+      get_coordinates (device->pointer_focus,
+                       device->surface_x,
+                       device->surface_y,
                        &event->crossing.x,
                        &event->crossing.y,
                        &event->crossing.x_root,
@@ -1037,7 +1041,9 @@ pointer_handle_motion (void              *data,
   event->motion.is_hint = 0;
   gdk_event_set_screen (event, display->screen);
 
-  get_coordinates (device,
+  get_coordinates (device->pointer_focus,
+                   device->surface_x,
+                   device->surface_y,
                    &event->motion.x,
                    &event->motion.y,
                    &event->motion.x_root,
@@ -1098,7 +1104,9 @@ pointer_handle_button (void              *data,
   event->button.button = gdk_button;
   gdk_event_set_screen (event, display->screen);
 
-  get_coordinates (device,
+  get_coordinates (device->pointer_focus,
+                   device->surface_x,
+                   device->surface_y,
                    &event->button.x,
                    &event->button.y,
                    &event->button.x_root,
@@ -1164,7 +1172,9 @@ pointer_handle_axis (void              *data,
   event->scroll.state = device->modifiers;
   gdk_event_set_screen (event, display->screen);
 
-  get_coordinates (device,
+  get_coordinates (device->pointer_focus,
+                   device->surface_x,
+                   device->surface_y,
                    &event->scroll.x,
                    &event->scroll.y,
                    &event->scroll.x_root,
@@ -1972,7 +1982,9 @@ tablet_handle_proximity_out (void             *data,
       event->crossing.focus = TRUE;
       event->crossing.state = 0;
 
-      get_coordinates (device,
+      get_coordinates (device_pair->focus,
+                       device_pair->surface_x,
+                       device_pair->surface_y,
                        &event->crossing.x,
                        &event->crossing.y,
                        &event->crossing.x_root,
@@ -2006,8 +2018,8 @@ tablet_handle_motion (void             *data,
     return;
 
   device->time = time;
-  device->surface_x = wl_fixed_to_double (sx);
-  device->surface_y = wl_fixed_to_double (sy);
+  device_pair->surface_x = wl_fixed_to_double (sx);
+  device_pair->surface_y = wl_fixed_to_double (sy);
 }
 
 static void
@@ -2091,7 +2103,9 @@ tablet_handle_frame (void             *data,
 
       gdk_wayland_device_update_window_cursor (device_pair->master);
 
-      get_coordinates (device,
+      get_coordinates (device_pair->focus,
+                       device_pair->surface_x,
+                       device_pair->surface_y,
                        &event->crossing.x,
                        &event->crossing.y,
                        &event->crossing.x_root,
@@ -2117,7 +2131,9 @@ tablet_handle_frame (void             *data,
   event->motion.is_hint = 0;
   gdk_event_set_screen (event, display->screen);
 
-  get_coordinates (device,
+  get_coordinates (device_pair->focus,
+                   device_pair->surface_x,
+                   device_pair->surface_y,
                    &event->motion.x,
                    &event->motion.y,
                    &event->motion.x_root,
@@ -2125,7 +2141,7 @@ tablet_handle_frame (void             *data,
 
   GDK_NOTE (EVENTS,
             g_message ("tablet motion %lf %lf, state %d",
-                       device->surface_x, device->surface_y,
+                       device_pair->surface_x, device_pair->surface_y,
                        event->button.state));
 
   gdk_wayland_device_update_window_cursor (device_pair->master);
@@ -2161,11 +2177,13 @@ tablet_handle_down (void             *data,
   event->button.button = GDK_BUTTON_PRIMARY;
   gdk_event_set_screen (event, wayland_display->screen);
 
-  get_coordinates (device,
-                   &event->button.x,
-                   &event->button.y,
-                   &event->button.x_root,
-                   &event->button.y_root);
+  get_coordinates (device_pair->focus,
+                   device_pair->surface_x,
+                   device_pair->surface_y,
+                   &event->motion.x,
+                   &event->motion.y,
+                   &event->motion.x_root,
+                   &event->motion.y_root);
 
   device->modifiers |= GDK_BUTTON1_MASK;
 
@@ -2209,7 +2227,9 @@ tablet_handle_up (void             *data,
   event->button.button = GDK_BUTTON_PRIMARY;
   gdk_event_set_screen (event, wayland_display->screen);
 
-  get_coordinates (device,
+  get_coordinates (device_pair->focus,
+                   device_pair->surface_x,
+                   device_pair->surface_y,
                    &event->button.x,
                    &event->button.y,
                    &event->button.x_root,
