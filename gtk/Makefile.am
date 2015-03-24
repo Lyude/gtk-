@@ -397,9 +397,11 @@ gtk_private_h_sources =		\
 	gtkcsskeyframesprivate.h	\
 	gtkcsslookupprivate.h	\
 	gtkcssmatcherprivate.h	\
+	gtkcssnodeprivate.h		\
 	gtkcssnodedeclarationprivate.h	\
 	gtkcssnumbervalueprivate.h	\
 	gtkcssparserprivate.h	\
+	gtkcsspathnodeprivate.h	\
 	gtkcsspositionvalueprivate.h	\
 	gtkcssproviderprivate.h	\
 	gtkcssrepeatvalueprivate.h	\
@@ -415,10 +417,12 @@ gtk_private_h_sources =		\
 	gtkcssstyleprivate.h 	\
 	gtkcssstylepropertyprivate.h \
 	gtkcsstransformvalueprivate.h	\
+	gtkcsstransientnodeprivate.h	\
 	gtkcsstransitionprivate.h	\
 	gtkcsstypedvalueprivate.h	\
 	gtkcssunsetvalueprivate.h	\
 	gtkcssvalueprivate.h	\
+	gtkcsswidgetnodeprivate.h	\
 	gtkcustompaperunixdialog.h \
 	gtkdialogprivate.h 	\
 	gtkentryprivate.h	\
@@ -500,6 +504,7 @@ gtk_private_h_sources =		\
 	gtkstylecontextprivate.h \
 	gtkstylepropertyprivate.h \
 	gtkstyleproviderprivate.h \
+	gtktextattributesprivate.h \
 	gtktextbtree.h		\
 	gtktextbufferserialize.h \
 	gtktextchildprivate.h	\
@@ -626,9 +631,11 @@ gtk_base_c_sources = 		\
 	gtkcsskeyframes.c	\
 	gtkcsslookup.c		\
 	gtkcssmatcher.c		\
+	gtkcssnode.c		\
 	gtkcssnodedeclaration.c	\
 	gtkcssnumbervalue.c	\
 	gtkcssparser.c		\
+	gtkcsspathnode.c	\
 	gtkcsspositionvalue.c	\
 	gtkcssprovider.c	\
 	gtkcssrepeatvalue.c	\
@@ -646,11 +653,13 @@ gtk_base_c_sources = 		\
 	gtkcssstyleproperty.c	\
 	gtkcssstylepropertyimpl.c \
 	gtkcsstransformvalue.c	\
+	gtkcsstransientnode.c	\
 	gtkcsstransition.c	\
 	gtkcsstypedvalue.c	\
 	gtkcssunsetvalue.c	\
-	gtkcssvalue.c		\
 	gtkcsstypes.c		\
+	gtkcssvalue.c		\
+	gtkcsswidgetnode.c	\
 	gtkdialog.c		\
 	gtkdrawingarea.c	\
 	gtkeditable.c		\
@@ -1121,7 +1130,7 @@ gtktypebuiltins.c: $(gtk_public_h_sources) $(a11y_h_sources) $(deprecated_h_sour
 	&& cp xgen-gtbc gtktypebuiltins.c  \
 	&& rm -f xgen-gtbc
 
-gtk.gresource.xml: Makefile.am
+gtk.gresource.xml: Makefile.am inspector/Makefile.inc
 	$(AM_V_GEN) echo "<?xml version='1.0' encoding='UTF-8'?>" > $@; \
 	echo "<gresources>" >> $@; \
 	echo "  <gresource prefix='/org/gtk/libgtk'>" >> $@; \

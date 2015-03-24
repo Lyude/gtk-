@@ -31,16 +31,19 @@
 #include "gtkcssimagebuiltinprivate.h"
 #include "gtkcssimagevalueprivate.h"
 #include "gtkcssnodedeclarationprivate.h"
+#include "gtkcssnodeprivate.h"
 #include "gtkcssnumbervalueprivate.h"
+#include "gtkcsspathnodeprivate.h"
 #include "gtkcssrgbavalueprivate.h"
 #include "gtkcssshadowsvalueprivate.h"
 #include "gtkcssstaticstyleprivate.h"
 #include "gtkcssstylepropertyprivate.h"
 #include "gtkcsstransformvalueprivate.h"
+#include "gtkcsstransientnodeprivate.h"
+#include "gtkcsswidgetnodeprivate.h"
 #include "gtkdebug.h"
 #include "gtktypebuiltins.h"
 #include "gtkintl.h"
-#include "gtkwidget.h"
 #include "gtkwindow.h"
 #include "gtkprivate.h"
 #include "gtkwidgetpath.h"
@@ -127,14 +130,6 @@
  * %GTK_STYLE_PROVIDER_PRIORITY_USER priority.
  */
 
-/* When these change we do a full restyling. Otherwise we try to figure out
- * if we need to change things. */
-#define GTK_STYLE_CONTEXT_RADICAL_CHANGE (GTK_CSS_CHANGE_NAME | GTK_CSS_CHANGE_CLASS | GTK_CSS_CHANGE_SOURCE)
-/* When these change we don’t clear the cache. This takes more memory but makes
- * things go faster. */
-#define GTK_STYLE_CONTEXT_CACHED_CHANGE (GTK_CSS_CHANGE_STATE)
-
-typedef struct GtkCssNode GtkCssNode;
 typedef struct PropertyValue PropertyValue;
 
 struct PropertyValue
@@ -144,13 +139,6 @@ struct PropertyValue
   GValue      value;
 };
 
-struct GtkCssNode
-{
-  GtkCssNodeDeclaration *decl;
-  GtkCssNode *parent;
-  GtkCssStyle *values;
-};
-
 struct _GtkStyleContextPrivate
 {
   GdkScreen *screen;
@@ -158,22 +146,13 @@ struct _GtkStyleContextPrivate
   guint cascade_changed_id;
   GtkStyleCascade *cascade;
   GtkStyleContext *parent;
-  GSList *children;
-  GtkWidget *widget;
-  GtkWidgetPath *widget_path;
-  GHashTable *style_values;
   GtkCssNode *cssnode;
   GSList *saved_nodes;
   GArray *property_cache;
 
-  guint frame_clock_update_id;
   GdkFrameClock *frame_clock;
 
-  GtkCssChange pending_changes;
-
   const GtkBitmask *invalidating_context;
-  guint animating : 1;
-  guint invalid : 1;
 };
 
 enum {
@@ -202,9 +181,7 @@ static void gtk_style_context_impl_get_property (GObject      *object,
                                                  GValue       *value,
                                                  GParamSpec   *pspec);
 
-
-static void gtk_style_context_disconnect_update (GtkStyleContext *context);
-static void gtk_style_context_connect_update    (GtkStyleContext *context);
+static GtkCssNode * gtk_style_context_get_root (GtkStyleContext *context);
 
 G_DEFINE_TYPE_WITH_PRIVATE (GtkStyleContext, gtk_style_context, G_TYPE_OBJECT)
 
@@ -213,8 +190,8 @@ gtk_style_context_real_changed (GtkStyleContext *context)
 {
   GtkStyleContextPrivate *priv = context->priv;
 
-  if (priv->widget)
-    _gtk_widget_style_context_invalidated (priv->widget);
+  if (GTK_IS_CSS_WIDGET_NODE (priv->cssnode))
+    _gtk_widget_style_context_invalidated (gtk_css_widget_node_get_widget (GTK_CSS_WIDGET_NODE (priv->cssnode)));
 }
 
 static void
@@ -294,61 +271,6 @@ gtk_style_context_clear_property_cache (GtkStyleContext *context)
   g_array_set_size (priv->property_cache, 0);
 }
 
-static GtkCssNode *
-gtk_css_node_new (void)
-{
-  GtkCssNode *cssnode;
-
-  cssnode = g_slice_new0 (GtkCssNode);
-  cssnode->decl = gtk_css_node_declaration_new ();
-
-  return cssnode;
-}
-
-static void
-gtk_css_node_set_values (GtkCssNode  *cssnode,
-                         GtkCssStyle *values)
-{
-  if (cssnode->values == values)
-    return;
-
-  if (values)
-    g_object_ref (values);
-
-  if (cssnode->values)
-    g_object_unref (cssnode->values);
-
-  cssnode->values = values;
-}
-
-static void
-gtk_css_node_free (GtkCssNode *cssnode)
-{
-  if (cssnode->values)
-    g_object_unref (cssnode->values);
-  gtk_css_node_declaration_unref (cssnode->decl);
-  g_slice_free (GtkCssNode, cssnode);
-}
-
-static GtkCssStyle *
-gtk_css_node_get_parent_style (GtkStyleContext *context,
-                               GtkCssNode      *cssnode)
-{
-  GtkStyleContextPrivate *priv;
-
-  g_assert (cssnode->parent == NULL || cssnode->parent->values != NULL);
-
-  if (cssnode->parent)
-    return cssnode->parent->values;
-
-  priv = context->priv;
-
-  if (priv->parent)
-    return gtk_style_context_lookup_style (priv->parent);
-
-  return NULL;
-}
-
 static void
 gtk_style_context_pop_style_node (GtkStyleContext *context)
 {
@@ -356,7 +278,9 @@ gtk_style_context_pop_style_node (GtkStyleContext *context)
 
   g_return_if_fail (priv->saved_nodes != NULL);
 
-  gtk_css_node_free (priv->cssnode);
+  if (GTK_IS_CSS_TRANSIENT_NODE (priv->cssnode))
+    gtk_css_node_set_parent (priv->cssnode, NULL);
+  g_object_unref (priv->cssnode);
   priv->cssnode = priv->saved_nodes->data;
   priv->saved_nodes = g_slist_remove (priv->saved_nodes, priv->cssnode);
 }
@@ -365,7 +289,7 @@ static void
 gtk_style_context_cascade_changed (GtkStyleCascade *cascade,
                                    GtkStyleContext *context)
 {
-  _gtk_style_context_queue_invalidate (context, GTK_CSS_CHANGE_SOURCE);
+  gtk_css_node_invalidate_style_provider (gtk_style_context_get_root (context));
 }
 
 static void
@@ -397,7 +321,7 @@ gtk_style_context_set_cascade (GtkStyleContext *context,
 
   priv->cascade = cascade;
 
-  if (cascade)
+  if (cascade && priv->cssnode != NULL)
     gtk_style_context_cascade_changed (cascade, context);
 }
 
@@ -409,127 +333,16 @@ gtk_style_context_init (GtkStyleContext *style_context)
   priv = style_context->priv =
     gtk_style_context_get_instance_private (style_context);
 
-  priv->style_values = g_hash_table_new_full (gtk_css_node_declaration_hash,
-                                              gtk_css_node_declaration_equal,
-                                              (GDestroyNotify) gtk_css_node_declaration_unref,
-                                              g_object_unref);
-
   priv->screen = gdk_screen_get_default ();
-
-  /* Create default info store */
-  priv->cssnode = gtk_css_node_new ();
-  gtk_css_node_declaration_set_state (&priv->cssnode->decl, GTK_STATE_FLAG_DIR_LTR);
 
   priv->property_cache = g_array_new (FALSE, FALSE, sizeof (PropertyValue));
 
   gtk_style_context_set_cascade (style_context,
                                  _gtk_settings_get_style_cascade (gtk_settings_get_for_screen (priv->screen), 1));
-}
 
-static void
-gtk_style_context_update (GdkFrameClock  *clock,
-                          GtkStyleContext *context)
-{
-  _gtk_style_context_queue_invalidate (context, GTK_CSS_CHANGE_ANIMATE);
-}
-
-static gboolean
-gtk_style_context_is_animating (GtkStyleContext *context)
-{
-  GtkStyleContextPrivate *priv = context->priv;
-
-  return priv->animating;
-}
-
-static void
-gtk_style_context_disconnect_update (GtkStyleContext *context)
-{
-  GtkStyleContextPrivate *priv = context->priv;
-
-  if (priv->frame_clock && priv->frame_clock_update_id)
-    {
-      g_signal_handler_disconnect (priv->frame_clock,
-                                   priv->frame_clock_update_id);
-      priv->frame_clock_update_id = 0;
-      gdk_frame_clock_end_updating (priv->frame_clock);
-    }
-}
-
-static void
-gtk_style_context_connect_update (GtkStyleContext *context)
-{
-  GtkStyleContextPrivate *priv = context->priv;
-
-  if (priv->frame_clock && priv->frame_clock_update_id == 0)
-    {
-      priv->frame_clock_update_id = g_signal_connect (priv->frame_clock,
-                                                      "update",
-                                                      G_CALLBACK (gtk_style_context_update),
-                                                      context);
-      gdk_frame_clock_begin_updating (priv->frame_clock);
-    }
-}
-
-static void
-gtk_style_context_stop_animating (GtkStyleContext *context)
-{
-  GtkStyleContextPrivate *priv = context->priv;
-
-  if (!gtk_style_context_is_animating (context))
-    return;
-
-  priv->animating = FALSE;
-
-  gtk_style_context_disconnect_update (context);
-}
-
-static void
-gtk_style_context_start_animating (GtkStyleContext *context)
-{
-  GtkStyleContextPrivate *priv = context->priv;
-
-  if (gtk_style_context_is_animating (context))
-    return;
-
-  priv->animating = TRUE;
-
-  gtk_style_context_connect_update (context);
-}
-
-static gboolean
-gtk_style_context_should_animate (GtkStyleContext *context)
-{
-  GtkStyleContextPrivate *priv;
-  GtkCssStyle *values;
-  gboolean animate;
-
-  priv = context->priv;
-
-  if (priv->widget == NULL)
-    return FALSE;
-
-  if (!gtk_widget_get_mapped (priv->widget))
-    return FALSE;
-
-  values = gtk_style_context_lookup_style (context);
-  if (!GTK_IS_CSS_ANIMATED_STYLE (values) ||
-      gtk_css_animated_style_is_static (GTK_CSS_ANIMATED_STYLE (values)))
-    return FALSE;
-
-  g_object_get (gtk_widget_get_settings (context->priv->widget),
-                "gtk-enable-animations", &animate,
-                NULL);
-
-  return animate;
-}
-
-void
-_gtk_style_context_update_animating (GtkStyleContext *context)
-{
-  if (gtk_style_context_should_animate (context))
-    gtk_style_context_start_animating (context);
-  else
-    gtk_style_context_stop_animating (context);
+  /* Create default info store */
+  priv->cssnode = gtk_css_path_node_new (style_context);
+  gtk_css_node_set_state (priv->cssnode, GTK_STATE_FLAG_DIR_LTR);
 }
 
 static void
@@ -539,7 +352,6 @@ gtk_style_context_clear_parent (GtkStyleContext *context)
 
   if (priv->parent)
     {
-      priv->parent->priv->children = g_slist_remove (priv->parent->priv->children, context);
       g_object_unref (priv->parent);
     }
 }
@@ -553,23 +365,16 @@ gtk_style_context_finalize (GObject *object)
   style_context = GTK_STYLE_CONTEXT (object);
   priv = style_context->priv;
 
-  gtk_style_context_stop_animating (style_context);
-
-  /* children hold a reference to us */
-  g_assert (priv->children == NULL);
+  while (priv->saved_nodes)
+    gtk_style_context_pop_style_node (style_context);
+  if (GTK_IS_CSS_PATH_NODE (priv->cssnode))
+    gtk_css_path_node_unset_context (GTK_CSS_PATH_NODE (priv->cssnode));
 
   gtk_style_context_clear_parent (style_context);
 
   gtk_style_context_set_cascade (style_context, NULL);
 
-  if (priv->widget_path)
-    gtk_widget_path_free (priv->widget_path);
-
-  g_hash_table_destroy (priv->style_values);
-
-  while (priv->saved_nodes)
-    gtk_style_context_pop_style_node (style_context);
-  gtk_css_node_free (priv->cssnode);
+  g_object_unref (priv->cssnode);
 
   gtk_style_context_clear_property_cache (style_context);
   g_array_free (priv->property_cache, TRUE);
@@ -671,35 +476,10 @@ gtk_style_context_get_root (GtkStyleContext *context)
     return priv->cssnode;
 }
 
-static GtkWidgetPath *
-create_query_path (GtkStyleContext              *context,
-                   const GtkCssNodeDeclaration  *decl,
-                   gboolean                      is_root)
+GtkStyleProviderPrivate *
+gtk_style_context_get_style_provider (GtkStyleContext *context)
 {
-  GtkStyleContextPrivate *priv;
-  GtkWidgetPath *path;
-  guint length;
-
-  priv = context->priv;
-  path = priv->widget ? _gtk_widget_create_path (priv->widget) : gtk_widget_path_copy (priv->widget_path);
-  length = gtk_widget_path_length (path);
-  if (!is_root)
-    {
-      GtkCssNode *root = gtk_style_context_get_root (context);
-
-      if (length > 0)
-        gtk_css_node_declaration_add_to_widget_path (root->decl, path, length - 1);
-
-      gtk_widget_path_append_type (path, length > 0 ? gtk_widget_path_iter_get_object_type (path, length - 1) : G_TYPE_NONE);
-      gtk_css_node_declaration_add_to_widget_path (decl, path, length);
-    }
-  else
-    {
-      if (length > 0)
-        gtk_css_node_declaration_add_to_widget_path (decl, path, length - 1);
-    }
-
-  return path;
+  return GTK_STYLE_PROVIDER_PRIVATE (context->priv->cascade);
 }
 
 static gboolean
@@ -711,267 +491,48 @@ gtk_style_context_has_custom_cascade (GtkStyleContext *context)
   return priv->cascade != _gtk_settings_get_style_cascade (settings, _gtk_style_cascade_get_scale (priv->cascade));
 }
 
-static gboolean
-may_use_global_parent_cache (GtkStyleContext *context)
-{
-  if (gtk_style_context_has_custom_cascade (context))
-    return FALSE;
-
-  return TRUE;
-}
-
-static GtkCssStyle *
-lookup_in_global_parent_cache (GtkStyleContext             *context,
-                               GtkCssStyle                 *parent,
-                               const GtkCssNodeDeclaration *decl)
-{
-  GHashTable *cache;
-  GtkCssStyle *style;
-
-  if (parent == NULL ||
-      !may_use_global_parent_cache (context))
-    return NULL;
-
-  cache = g_object_get_data (G_OBJECT (parent), "gtk-global-cache");
-  if (cache == NULL)
-    return NULL;
-
-  style = g_hash_table_lookup (cache, decl);
-
-  return style;
-}
-
-static gboolean
-may_be_stored_in_parent_cache (GtkCssStyle *style)
-{
-  GtkCssChange change;
-
-  change = gtk_css_static_style_get_change (GTK_CSS_STATIC_STYLE (style));
-
-  /* The cache is shared between all children of the parent, so if a
-   * style depends on a sibling it is not independant of the child.
-   */
-  if (change & GTK_CSS_CHANGE_ANY_SIBLING)
-    return FALSE;
-
-  /* Again, the cache is shared between all children of the parent.
-   * If the position is relevant, no child has the same style.
-   */
-  if (change & GTK_CSS_CHANGE_POSITION)
-    return FALSE;
-
-  return TRUE;
-}
-
-static void
-store_in_global_parent_cache (GtkStyleContext             *context,
-                              GtkCssStyle                 *parent,
-                              const GtkCssNodeDeclaration *decl,
-                              GtkCssStyle                 *style)
-{
-  GHashTable *cache;
-
-  g_assert (GTK_IS_CSS_STATIC_STYLE (style));
-
-  if (parent == NULL ||
-      !may_use_global_parent_cache (context))
-    return;
-
-  if (!may_be_stored_in_parent_cache (style))
-    return;
-
-  cache = g_object_get_data (G_OBJECT (parent), "gtk-global-cache");
-  if (cache == NULL)
-    {
-      cache = g_hash_table_new_full (gtk_css_node_declaration_hash,
-                                     gtk_css_node_declaration_equal,
-                                     (GDestroyNotify) gtk_css_node_declaration_unref,
-                                     g_object_unref);
-      g_object_set_data_full (G_OBJECT (parent), "gtk-global-cache", cache, (GDestroyNotify) g_hash_table_destroy);
-    }
-
-  g_hash_table_insert (cache,
-                       gtk_css_node_declaration_ref ((GtkCssNodeDeclaration *) decl),
-                       g_object_ref (style));
-}
-
-static GtkCssStyle *
-update_properties (GtkStyleContext             *context,
-                   GtkCssStyle                 *style,
-                   const GtkCssNodeDeclaration *decl,
-                   gboolean                     is_root,
-                   GtkCssStyle                 *parent,
-                   const GtkBitmask            *parent_changes)
-{
-  GtkStyleContextPrivate *priv;
-  GtkCssMatcher matcher;
-  GtkWidgetPath *path;
-  GtkCssStyle *result;
-
-  priv = context->priv;
-
-  result = lookup_in_global_parent_cache (context, parent, decl);
-  if (result)
-    return g_object_ref (result);
-
-  path = create_query_path (context, decl, is_root);
-
-  if (!_gtk_css_matcher_init (&matcher, path))
-    {
-      g_assert_not_reached ();
-    }
-
-  result = gtk_css_static_style_new_update (GTK_CSS_STATIC_STYLE (style),
-                                            parent_changes,
-                                            GTK_STYLE_PROVIDER_PRIVATE (priv->cascade),
-                                            &matcher,
-                                            parent);
-
-  gtk_widget_path_free (path);
-
-  store_in_global_parent_cache (context, parent, decl, result);
-
-  return result;
-}
-
-static GtkCssStyle *
-build_properties (GtkStyleContext             *context,
-                  const GtkCssNodeDeclaration *decl,
-                  gboolean                     is_root,
-                  GtkCssStyle                 *parent)
-{
-  GtkStyleContextPrivate *priv;
-  GtkCssMatcher matcher;
-  GtkWidgetPath *path;
-  GtkCssStyle *style;
-
-  priv = context->priv;
-
-  style = lookup_in_global_parent_cache (context, parent, decl);
-  if (style)
-    return g_object_ref (style);
-
-  path = create_query_path (context, decl, is_root);
-
-  if (_gtk_css_matcher_init (&matcher, path))
-    style = gtk_css_static_style_new_compute (GTK_STYLE_PROVIDER_PRIVATE (priv->cascade),
-                                              &matcher,
-                                              parent);
-  else
-    style = gtk_css_static_style_new_compute (GTK_STYLE_PROVIDER_PRIVATE (priv->cascade),
-                                              NULL,
-                                              parent);
-
-  gtk_widget_path_free (path);
-
-  store_in_global_parent_cache (context, parent, decl, style);
-
-  return style;
-}
-
 GtkCssStyle *
 gtk_style_context_lookup_style (GtkStyleContext *context)
 {
-  GtkStyleContextPrivate *priv;
-  GtkCssStyle *values;
-  GtkCssNode *cssnode;
-
-  priv = context->priv;
-  cssnode = priv->cssnode;
-
-  /* Current data in use is cached, just return it */
-  if (cssnode->values)
-    return cssnode->values;
-
-  if (!gtk_style_context_is_saved (context))
-    {
-      values = build_properties (context, cssnode->decl, TRUE, gtk_css_node_get_parent_style (context, cssnode));
-    }
-  else
-    {
-      values = g_hash_table_lookup (priv->style_values, cssnode->decl);
-      if (values)
-        {
-          gtk_css_node_set_values (cssnode, values);
-          return values;
-        }
-
-      values = build_properties (context, cssnode->decl, FALSE, gtk_css_node_get_parent_style (context, cssnode));
-      g_hash_table_insert (priv->style_values,
-                           gtk_css_node_declaration_ref (cssnode->decl),
-                           g_object_ref (values));
-    }
-  
-  gtk_css_node_set_values (cssnode, values);
-  g_object_unref (values);
-
-  return values;
+  /* Code will recreate style if it was changed */
+  return gtk_css_node_get_style (context->priv->cssnode);
 }
 
 static GtkCssStyle *
 gtk_style_context_lookup_style_for_state (GtkStyleContext *context,
                                           GtkStateFlags    state)
 {
-  GtkCssNodeDeclaration *decl;
+  GtkCssNode *node;
   GtkCssStyle *values;
 
-  if (gtk_css_node_declaration_get_state (context->priv->cssnode->decl) == state)
+  if (gtk_css_node_get_state (context->priv->cssnode) == state)
     return g_object_ref (gtk_style_context_lookup_style (context));
 
   if (g_getenv ("GTK_STYLE_CONTEXT_WARNING"))
-    g_warning ("State does not match current state");
+    {
+      GtkCssNode *root = gtk_style_context_get_root (context);
 
-  decl = gtk_css_node_declaration_ref (context->priv->cssnode->decl);
-  gtk_css_node_declaration_set_state (&decl, state);
-  values = build_properties (context,
-                             decl,
-                             !gtk_style_context_is_saved (context),
-                             gtk_css_node_get_parent_style (context, context->priv->cssnode));
-  gtk_css_node_declaration_unref (decl);
+      if (GTK_IS_CSS_WIDGET_NODE (root))
+        {
+          GtkWidget *widget = gtk_css_widget_node_get_widget (GTK_CSS_WIDGET_NODE (root));
+          g_warning ("State %u for %s %p doesn't match state %u set via gtk_style_context_set_state ()",
+                     state, gtk_widget_get_name (widget), widget, gtk_css_node_get_state (context->priv->cssnode));
+        }
+      else
+        {
+          g_warning ("State %u for context %p doesn't match state %u set via gtk_style_context_set_state ()",
+                     state, context, gtk_css_node_get_state (context->priv->cssnode));
+        }
+    }
+
+  node = gtk_css_transient_node_new (context->priv->cssnode);
+  gtk_css_node_set_parent (node, gtk_css_node_get_parent (context->priv->cssnode));
+  gtk_css_node_set_state (node, state);
+  values = g_object_ref (gtk_css_node_get_style (node));
+  gtk_css_node_set_parent (node, NULL);
+  g_object_unref (node);
 
   return values;
-}
-
-static void
-gtk_style_context_set_invalid (GtkStyleContext *context,
-                               gboolean         invalid)
-{
-  GtkStyleContextPrivate *priv;
-  
-  priv = context->priv;
-
-  if (priv->invalid == invalid)
-    return;
-
-  priv->invalid = invalid;
-
-  if (invalid)
-    {
-      G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
-      if (GTK_IS_RESIZE_CONTAINER (priv->widget))
-        _gtk_container_queue_restyle (GTK_CONTAINER (priv->widget));
-      else if (priv->parent)
-        gtk_style_context_set_invalid (priv->parent, TRUE);
-      G_GNUC_END_IGNORE_DEPRECATIONS;
-    }
-}
-
-static void
-gtk_style_context_queue_invalidate_internal (GtkStyleContext *context,
-                                             GtkCssChange     change)
-{
-  GtkStyleContextPrivate *priv = context->priv;
-  GtkCssNode *cssnode = priv->cssnode;
-
-  if (gtk_style_context_is_saved (context))
-    {
-      gtk_css_node_set_values (cssnode, NULL);
-    }
-  else
-    {
-      _gtk_style_context_queue_invalidate (context, change);
-      /* XXX: We need to invalidate siblings here somehow */
-    }
 }
 
 /**
@@ -994,23 +555,21 @@ gtk_style_context_new (void)
   return g_object_new (GTK_TYPE_STYLE_CONTEXT, NULL);
 }
 
-void
-_gtk_style_context_set_widget (GtkStyleContext *context,
-                               GtkWidget       *widget)
+GtkStyleContext *
+gtk_style_context_new_for_node (GtkCssNode *node)
 {
-  g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
-  g_return_if_fail (widget == NULL || GTK_IS_WIDGET (widget));
+  GtkStyleContextPrivate *priv;
+  GtkStyleContext *context;
 
-  context->priv->widget = widget;
+  g_return_val_if_fail (GTK_IS_CSS_NODE (node), NULL);
 
-  if (widget)
-    gtk_css_node_declaration_set_type (&context->priv->cssnode->decl, G_OBJECT_TYPE (widget));
-  else
-    gtk_css_node_declaration_set_type (&context->priv->cssnode->decl, G_TYPE_NONE);
+  context = gtk_style_context_new ();
 
-  _gtk_style_context_update_animating (context);
+  priv = context->priv;
+  g_object_unref (priv->cssnode);
+  priv->cssnode = g_object_ref (node);
 
-  _gtk_style_context_queue_invalidate (context, GTK_CSS_CHANGE_ANY_SELF);
+  return context;
 }
 
 /**
@@ -1250,16 +809,12 @@ gtk_style_context_get_property (GtkStyleContext *context,
                                 GtkStateFlags    state,
                                 GValue          *value)
 {
-  GtkStyleContextPrivate *priv;
   GtkCssStyle *values;
   GtkStyleProperty *prop;
 
   g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
   g_return_if_fail (property != NULL);
   g_return_if_fail (value != NULL);
-
-  priv = context->priv;
-  g_return_if_fail (priv->widget != NULL || priv->widget_path != NULL);
 
   prop = _gtk_style_property_lookup (property);
   if (prop == NULL)
@@ -1362,10 +917,7 @@ gtk_style_context_set_id (GtkStyleContext *context,
 {
   g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
 
-  if (!gtk_css_node_declaration_set_id (&context->priv->cssnode->decl, id))
-    return;
-
-  gtk_style_context_queue_invalidate_internal (context, GTK_CSS_CHANGE_ID);
+  gtk_css_node_set_id (context->priv->cssnode, id);
 }
 
 /*
@@ -1381,7 +933,7 @@ gtk_style_context_get_id (GtkStyleContext *context)
 {
   g_return_val_if_fail (GTK_IS_STYLE_CONTEXT (context), NULL);
 
-  return gtk_css_node_declaration_get_id (context->priv->cssnode->decl);
+  return gtk_css_node_get_id (context->priv->cssnode);
 }
 
 /**
@@ -1401,16 +953,13 @@ gtk_style_context_set_state (GtkStyleContext *context,
   GtkStateFlags old_flags;
   g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
 
-  old_flags = gtk_css_node_declaration_get_state (context->priv->cssnode->decl);
+  old_flags = gtk_css_node_get_state (context->priv->cssnode);
 
-  if (!gtk_css_node_declaration_set_state (&context->priv->cssnode->decl, flags))
-    return;
+  gtk_css_node_set_state (context->priv->cssnode, flags);
 
   if (((old_flags ^ flags) & (GTK_STATE_FLAG_DIR_LTR | GTK_STATE_FLAG_DIR_RTL)) &&
       !gtk_style_context_is_saved (context))
     g_object_notify (G_OBJECT (context), "direction");
-  
-  gtk_style_context_queue_invalidate_internal (context, GTK_CSS_CHANGE_STATE);
 }
 
 /**
@@ -1428,7 +977,7 @@ gtk_style_context_get_state (GtkStyleContext *context)
 {
   g_return_val_if_fail (GTK_IS_STYLE_CONTEXT (context), 0);
 
-  return gtk_css_node_declaration_get_state (context->priv->cssnode->decl);
+  return gtk_css_node_get_state (context->priv->cssnode);
 }
 
 /**
@@ -1535,31 +1084,28 @@ void
 gtk_style_context_set_path (GtkStyleContext *context,
                             GtkWidgetPath   *path)
 {
-  GtkStyleContextPrivate *priv;
+  GtkCssNode *root;
 
   g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
   g_return_if_fail (path != NULL);
 
-  priv = context->priv;
-  g_return_if_fail (priv->widget == NULL);
-
-  if (priv->widget_path)
-    {
-      gtk_widget_path_free (priv->widget_path);
-      priv->widget_path = NULL;
-      gtk_css_node_declaration_set_type (&context->priv->cssnode->decl, G_TYPE_NONE);
-    }
+  root = gtk_style_context_get_root (context);
+  g_return_if_fail (GTK_IS_CSS_PATH_NODE (root));
 
   if (path)
     {
-      priv->widget_path = gtk_widget_path_copy (path);
-      if (gtk_widget_path_length (path))
-        gtk_css_node_declaration_set_type (&context->priv->cssnode->decl,
-                                           gtk_widget_path_iter_get_object_type (path, -1));
+      GtkWidgetPath *copy = gtk_widget_path_copy (path);
+      gtk_css_path_node_set_widget_path (GTK_CSS_PATH_NODE (root), copy);
+      if (gtk_widget_path_length (copy))
+        gtk_css_node_set_widget_type (root,
+                                      gtk_widget_path_iter_get_object_type (copy, -1));
+      gtk_widget_path_unref (copy);
     }
-
-
-  _gtk_style_context_queue_invalidate (context, GTK_CSS_CHANGE_ANY);
+  else
+    {
+      gtk_css_path_node_set_widget_path (GTK_CSS_PATH_NODE (root), NULL);
+      gtk_css_node_set_widget_type (root, G_TYPE_NONE);
+    }
 }
 
 /**
@@ -1575,13 +1121,7 @@ gtk_style_context_set_path (GtkStyleContext *context,
 const GtkWidgetPath *
 gtk_style_context_get_path (GtkStyleContext *context)
 {
-  GtkStyleContextPrivate *priv;
-
-  priv = context->priv;
-  if (priv->widget)
-    return gtk_widget_get_path (priv->widget);
-  else
-    return priv->widget_path;
+  return gtk_css_node_get_widget_path (gtk_style_context_get_root (context));
 }
 
 /**
@@ -1615,10 +1155,15 @@ gtk_style_context_set_parent (GtkStyleContext *context,
 
   if (parent)
     {
-      parent->priv->children = g_slist_prepend (parent->priv->children, context);
+      GtkCssNode *root = gtk_style_context_get_root (context);
       g_object_ref (parent);
-      if (priv->invalid)
-        gtk_style_context_set_invalid (parent, TRUE);
+
+      if (gtk_css_node_get_parent (root) == NULL)
+        gtk_css_node_set_parent (root, gtk_style_context_get_root (parent));
+    }
+  else
+    {
+      gtk_css_node_set_parent (gtk_style_context_get_root (context), NULL);
     }
 
   gtk_style_context_clear_parent (context);
@@ -1626,7 +1171,7 @@ gtk_style_context_set_parent (GtkStyleContext *context,
   priv->parent = parent;
 
   g_object_notify (G_OBJECT (context), "parent");
-  _gtk_style_context_queue_invalidate (context, GTK_CSS_CHANGE_ANY_PARENT | GTK_CSS_CHANGE_ANY_SIBLING);
+  gtk_css_node_invalidate (gtk_style_context_get_root (context), GTK_CSS_CHANGE_ANY_PARENT | GTK_CSS_CHANGE_ANY_SIBLING);
 }
 
 /**
@@ -1677,9 +1222,9 @@ gtk_style_context_save (GtkStyleContext *context)
   if (!gtk_style_context_is_saved (context))
     gtk_style_context_lookup_style (context);
 
-  cssnode = gtk_css_node_new ();
-  cssnode->decl = gtk_css_node_declaration_ref (priv->cssnode->decl);
-  cssnode->parent = gtk_style_context_get_root (context);
+  cssnode = gtk_css_transient_node_new (priv->cssnode);
+  gtk_css_node_set_parent (cssnode, gtk_style_context_get_root (context));
+  gtk_css_node_set_widget_type (cssnode, gtk_css_node_get_widget_type (priv->cssnode));
 
   priv->saved_nodes = g_slist_prepend (priv->saved_nodes, priv->cssnode);
   priv->cssnode = cssnode;
@@ -1746,8 +1291,7 @@ gtk_style_context_add_class (GtkStyleContext *context,
   priv = context->priv;
   class_quark = g_quark_from_string (class_name);
 
-  if (gtk_css_node_declaration_add_class (&priv->cssnode->decl, class_quark))
-    gtk_style_context_queue_invalidate_internal (context, GTK_CSS_CHANGE_CLASS);
+  gtk_css_node_add_class (priv->cssnode, class_quark);
 }
 
 /**
@@ -1776,8 +1320,7 @@ gtk_style_context_remove_class (GtkStyleContext *context,
 
   priv = context->priv;
 
-  if (gtk_css_node_declaration_remove_class (&priv->cssnode->decl, class_quark))
-    gtk_style_context_queue_invalidate_internal (context, GTK_CSS_CHANGE_CLASS);
+  gtk_css_node_remove_class (priv->cssnode, class_quark);
 }
 
 /**
@@ -1809,7 +1352,7 @@ gtk_style_context_has_class (GtkStyleContext *context,
 
   priv = context->priv;
 
-  return gtk_css_node_declaration_has_class (priv->cssnode->decl, class_quark);
+  return gtk_css_node_has_class (priv->cssnode, class_quark);
 }
 
 static void
@@ -1846,7 +1389,7 @@ gtk_style_context_list_classes (GtkStyleContext *context)
 
   priv = context->priv;
   
-  classes = gtk_css_node_declaration_list_classes (priv->cssnode->decl);
+  classes = gtk_css_node_list_classes (priv->cssnode);
   quarks_to_strings (classes);
 
   return classes;
@@ -1877,7 +1420,7 @@ gtk_style_context_list_regions (GtkStyleContext *context)
 
   priv = context->priv;
 
-  regions = gtk_css_node_declaration_list_regions (priv->cssnode->decl);
+  regions = gtk_css_node_list_regions (priv->cssnode);
   quarks_to_strings (regions);
 
   return regions;
@@ -1951,8 +1494,7 @@ gtk_style_context_add_region (GtkStyleContext *context,
   priv = context->priv;
   region_quark = g_quark_from_string (region_name);
 
-  if (gtk_css_node_declaration_add_region (&priv->cssnode->decl, region_quark, flags))
-    gtk_style_context_queue_invalidate_internal (context, GTK_CSS_CHANGE_REGION);
+  gtk_css_node_add_region (priv->cssnode, region_quark, flags);
 }
 
 /**
@@ -1983,8 +1525,7 @@ gtk_style_context_remove_region (GtkStyleContext *context,
 
   priv = context->priv;
 
-  if (gtk_css_node_declaration_remove_region (&priv->cssnode->decl, region_quark))
-    gtk_style_context_queue_invalidate_internal (context, GTK_CSS_CHANGE_REGION);
+  gtk_css_node_remove_region (priv->cssnode, region_quark);
 }
 
 /**
@@ -2024,7 +1565,7 @@ gtk_style_context_has_region (GtkStyleContext *context,
 
   priv = context->priv;
 
-  return gtk_css_node_declaration_has_region (priv->cssnode->decl, region_quark, flags_return);
+  return gtk_css_node_has_region (priv->cssnode, region_quark, flags_return);
 }
 
 static gint
@@ -2058,6 +1599,7 @@ _gtk_style_context_peek_style_property (GtkStyleContext *context,
                                         GParamSpec      *pspec)
 {
   GtkStyleContextPrivate *priv;
+  GtkWidgetPath *path;
   PropertyValue *pcache, key = { 0 };
   guint i;
 
@@ -2085,13 +1627,12 @@ _gtk_style_context_peek_style_property (GtkStyleContext *context,
   g_param_spec_ref (pcache->pspec);
   g_value_init (&pcache->value, G_PARAM_SPEC_VALUE_TYPE (pspec));
 
-  if (priv->widget || priv->widget_path)
+  path = gtk_css_node_create_widget_path (gtk_style_context_get_root (context));
+  if (path && gtk_widget_path_length (path) > 0)
     {
-      GtkWidgetPath *widget_path = priv->widget ? _gtk_widget_create_path (priv->widget) : priv->widget_path;
-
       if (gtk_style_provider_get_style_property (GTK_STYLE_PROVIDER (priv->cascade),
-                                                 widget_path,
-                                                 gtk_widget_path_iter_get_state (widget_path, -1),
+                                                 path,
+                                                 gtk_widget_path_iter_get_state (path, -1),
                                                  pspec, &pcache->value))
         {
           G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
@@ -2111,7 +1652,7 @@ _gtk_style_context_peek_style_property (GtkStyleContext *context,
               else
                 g_value_init (&pcache->value, GDK_TYPE_COLOR);
 
-              if (_gtk_style_context_resolve_color (context, _gtk_symbolic_color_get_css_value (color), &rgba, NULL))
+              if (_gtk_style_context_resolve_color (context, _gtk_symbolic_color_get_css_value (color), &rgba))
                 {
                   if (G_PARAM_SPEC_VALUE_TYPE (pspec) == GDK_TYPE_RGBA)
                     g_value_set_boxed (&pcache->value, &rgba);
@@ -2134,15 +1675,13 @@ _gtk_style_context_peek_style_property (GtkStyleContext *context,
 
           G_GNUC_END_IGNORE_DEPRECATIONS;
 
-          if (priv->widget)
-            gtk_widget_path_free (widget_path);
+          gtk_widget_path_unref (path);
 
           return &pcache->value;
         }
-
-      if (priv->widget)
-        gtk_widget_path_free (widget_path);
     }
+
+  gtk_widget_path_unref (path);
 
   /* not supplied by any provider, revert to default */
   g_param_value_set_default (pspec, &pcache->value);
@@ -2166,7 +1705,7 @@ gtk_style_context_get_style_property (GtkStyleContext *context,
                                       const gchar     *property_name,
                                       GValue          *value)
 {
-  GtkStyleContextPrivate *priv;
+  GtkCssNode *root;
   GtkWidgetClass *widget_class;
   GParamSpec *pspec;
   const GValue *peek_value;
@@ -2176,18 +1715,27 @@ gtk_style_context_get_style_property (GtkStyleContext *context,
   g_return_if_fail (property_name != NULL);
   g_return_if_fail (value != NULL);
 
-  priv = context->priv;
+  root = gtk_style_context_get_root (context);
 
-  if (priv->widget)
+  if (GTK_IS_CSS_WIDGET_NODE (root))
     {
-      widget_type = G_OBJECT_TYPE (priv->widget);
-    }
-  else
-    {
-      if (!priv->widget_path)
+      GtkWidget *widget;
+      
+      widget = gtk_css_widget_node_get_widget (GTK_CSS_WIDGET_NODE (root));
+      if (widget == NULL)
         return;
 
-      widget_type = gtk_widget_path_get_object_type (priv->widget_path);
+      widget_type = G_OBJECT_TYPE (widget);
+    }
+  else if (GTK_IS_CSS_PATH_NODE (root))
+    {
+      GtkWidgetPath *path;
+      
+      path = gtk_css_path_node_get_widget_path (GTK_CSS_PATH_NODE (root));
+      if (path == NULL)
+        return;
+
+      widget_type = gtk_widget_path_get_object_type (path);
 
       if (!g_type_is_a (widget_type, GTK_TYPE_WIDGET))
         {
@@ -2196,6 +1744,10 @@ gtk_style_context_get_style_property (GtkStyleContext *context,
                      g_type_name (widget_type));
           return;
         }
+    }
+  else
+    {
+      return;
     }
 
   widget_class = g_type_class_ref (widget_type);
@@ -2238,25 +1790,34 @@ void
 gtk_style_context_get_style_valist (GtkStyleContext *context,
                                     va_list          args)
 {
-  GtkStyleContextPrivate *priv;
+  GtkCssNode *root;
   const gchar *prop_name;
   GType widget_type;
 
   g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
 
   prop_name = va_arg (args, const gchar *);
-  priv = context->priv;
+  root = gtk_style_context_get_root (context);
 
-  if (priv->widget)
+  if (GTK_IS_CSS_WIDGET_NODE (root))
     {
-      widget_type = G_OBJECT_TYPE (priv->widget);
-    }
-  else
-    {
-      if (!priv->widget_path)
+      GtkWidget *widget;
+      
+      widget = gtk_css_widget_node_get_widget (GTK_CSS_WIDGET_NODE (root));
+      if (widget == NULL)
         return;
 
-      widget_type = gtk_widget_path_get_object_type (priv->widget_path);
+      widget_type = G_OBJECT_TYPE (widget);
+    }
+  else if (GTK_IS_CSS_PATH_NODE (root))
+    {
+      GtkWidgetPath *path;
+      
+      path = gtk_css_path_node_get_widget_path (GTK_CSS_PATH_NODE (root));
+      if (path == NULL)
+        return;
+
+      widget_type = gtk_widget_path_get_object_type (path);
 
       if (!g_type_is_a (widget_type, GTK_TYPE_WIDGET))
         {
@@ -2265,6 +1826,10 @@ gtk_style_context_get_style_valist (GtkStyleContext *context,
                      g_type_name (widget_type));
           return;
         }
+    }
+  else
+    {
+      return;
     }
 
   while (prop_name)
@@ -2454,17 +2019,11 @@ gtk_style_context_set_frame_clock (GtkStyleContext *context,
   if (priv->frame_clock == frame_clock)
     return;
 
-  if (priv->animating)
-    gtk_style_context_disconnect_update (context);
-
   if (priv->frame_clock)
     g_object_unref (priv->frame_clock);
   priv->frame_clock = frame_clock;
   if (priv->frame_clock)
     g_object_ref (priv->frame_clock);
-
-  if (priv->animating)
-    gtk_style_context_connect_update (context);
 
   g_object_notify (G_OBJECT (context), "paint-clock");
 }
@@ -2592,7 +2151,7 @@ gtk_style_context_set_junction_sides (GtkStyleContext  *context,
 {
   g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
 
-  gtk_css_node_declaration_set_junction_sides (&context->priv->cssnode->decl, sides);
+  gtk_css_node_set_junction_sides (context->priv->cssnode, sides);
 }
 
 /**
@@ -2610,14 +2169,13 @@ gtk_style_context_get_junction_sides (GtkStyleContext *context)
 {
   g_return_val_if_fail (GTK_IS_STYLE_CONTEXT (context), 0);
 
-  return gtk_css_node_declaration_get_junction_sides (context->priv->cssnode->decl);
+  return gtk_css_node_get_junction_sides (context->priv->cssnode);
 }
 
 gboolean
 _gtk_style_context_resolve_color (GtkStyleContext    *context,
                                   GtkCssValue        *color,
-                                  GdkRGBA            *result,
-                                  GtkCssDependencies *dependencies)
+                                  GdkRGBA            *result)
 {
   GtkCssValue *val;
 
@@ -2628,8 +2186,6 @@ _gtk_style_context_resolve_color (GtkStyleContext    *context,
   val = _gtk_css_color_value_resolve (color,
                                       GTK_STYLE_PROVIDER_PRIVATE (context->priv->cascade),
                                       _gtk_style_context_peek_property (context, GTK_CSS_PROPERTY_COLOR),
-                                      GTK_CSS_DEPENDS_ON_COLOR,
-                                      dependencies,
                                       NULL);
   if (val == NULL)
     return FALSE;
@@ -2664,7 +2220,7 @@ gtk_style_context_lookup_color (GtkStyleContext *context,
   if (value == NULL)
     return FALSE;
 
-  return _gtk_style_context_resolve_color (context, value, color, NULL);
+  return _gtk_style_context_resolve_color (context, value, color);
 }
 
 /**
@@ -2833,23 +2389,6 @@ gtk_style_context_pop_animatable_region (GtkStyleContext *context)
 }
 
 static void
-gtk_style_context_clear_cache (GtkStyleContext *context)
-{
-  GtkStyleContextPrivate *priv;
-  GSList *l;
-
-  priv = context->priv;
-
-  for (l = priv->saved_nodes; l; l = l->next)
-    {
-      gtk_css_node_set_values (l->data, NULL);
-    }
-  g_hash_table_remove_all (priv->style_values);
-
-  gtk_style_context_clear_property_cache (context);
-}
-
-static void
 gtk_style_context_do_invalidate (GtkStyleContext  *context,
                                  const GtkBitmask *changes)
 {
@@ -2872,247 +2411,14 @@ gtk_style_context_do_invalidate (GtkStyleContext  *context,
   priv->invalidating_context = NULL;
 }
 
-static gboolean
-gtk_style_context_style_needs_full_revalidate (GtkCssStyle  *style,
-                                               GtkCssChange  change)
-{
-  /* Try to avoid invalidating if we can */
-  if (change & GTK_STYLE_CONTEXT_RADICAL_CHANGE)
-    return TRUE;
-
-  if (GTK_IS_CSS_ANIMATED_STYLE (style))
-    style = GTK_CSS_ANIMATED_STYLE (style)->style;
-
-  if (gtk_css_static_style_get_change (GTK_CSS_STATIC_STYLE (style)) & change)
-    return TRUE;
-  else
-    return FALSE;
-}
-
-static void
-gtk_style_context_update_cache (GtkStyleContext  *context,
-                                GtkCssChange      change,
-                                const GtkBitmask *parent_changes)
-{
-  GtkStyleContextPrivate *priv;
-  GHashTableIter iter;
-  GtkCssStyle *parent;
-  gpointer key, value;
-
-  if (change == 0 && _gtk_bitmask_is_empty (parent_changes))
-    return;
-
-  priv = context->priv;
-  parent = gtk_style_context_get_root (context)->values;
-
-  g_hash_table_iter_init (&iter, priv->style_values);
-  while (g_hash_table_iter_next (&iter, &key, &value))
-    {
-      const GtkCssNodeDeclaration *decl = key;
-      GtkCssStyle *style = value;
-
-      if (gtk_style_context_style_needs_full_revalidate (style, change))
-        {
-          g_hash_table_iter_remove (&iter);
-        }
-      else
-        {
-          style = update_properties (context, style, decl, FALSE, parent, parent_changes);
-
-          g_hash_table_iter_replace (&iter, style);
-        }
-    }
-
-  gtk_style_context_clear_property_cache (context);
-}
-
-static gboolean
-gtk_style_context_should_create_transitions (GtkStyleContext *context,
-                                             GtkCssStyle     *previous_style)
-{
-  GtkStyleContextPrivate *priv;
-  gboolean animate;
-
-  priv = context->priv;
-
-  if (priv->widget == NULL)
-    return FALSE;
-
-  if (!gtk_widget_get_mapped (priv->widget))
-    return FALSE;
-
-  if (previous_style == gtk_css_static_style_get_default ())
-    return FALSE;
-
-  g_object_get (gtk_widget_get_settings (context->priv->widget),
-                "gtk-enable-animations", &animate,
-                NULL);
-
-  return animate;
-}
-
 void
-_gtk_style_context_validate (GtkStyleContext  *context,
-                             gint64            timestamp,
-                             GtkCssChange      change,
-                             const GtkBitmask *parent_changes)
+gtk_style_context_validate (GtkStyleContext  *context,
+                            const GtkBitmask *changes)
 {
-  GtkStyleContextPrivate *priv;
-  GtkCssNode *cssnode;
-  GtkCssStyle *current;
-  GtkBitmask *changes;
-  GSList *list;
-
-  g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
-
-  priv = context->priv;
-
-  change |= priv->pending_changes;
-  
-  /* If you run your application with
-   *   GTK_DEBUG=no-css-cache
-   * every invalidation will purge the cache and completely query
-   * everything anew form the cache. This is slow (in particular
-   * when animating), but useful for figuring out bugs.
-   *
-   * We achieve that by pretending that everything that could have
-   * changed has and so we of course totally need to redo everything.
-   *
-   * Note that this also completely revalidates child widgets all
-   * the time.
-   */
-  if (G_UNLIKELY (gtk_get_debug_flags () & GTK_DEBUG_NO_CSS_CACHE))
-    change = GTK_CSS_CHANGE_ANY;
-
-  if (!priv->invalid && change == 0 && _gtk_bitmask_is_empty (parent_changes))
-    return;
-
-  if (G_UNLIKELY (gtk_style_context_is_saved (context)))
-    {
-      g_warning ("unmatched gtk_style_context_save/restore() detected while validating context for %s %p",
-                 priv->widget ? gtk_widget_get_name (priv->widget) : "widget path",
-                 priv->widget ? (gpointer) priv->widget : (gpointer) priv->widget_path);
-      cssnode = gtk_style_context_get_root (context);
-    }
-  else
-    cssnode = priv->cssnode;
-
-  priv->pending_changes = 0;
-  gtk_style_context_set_invalid (context, FALSE);
-
-  current = cssnode->values;
-  if (current == NULL)
-    current = gtk_css_static_style_get_default ();
-  g_object_ref (current);
-
-  /* Try to avoid invalidating if we can */
-  if (gtk_style_context_style_needs_full_revalidate (current, change))
-    {
-      GtkCssStyle *style, *static_style;
-
-      static_style = build_properties (context, cssnode->decl, TRUE, gtk_css_node_get_parent_style (context, cssnode));
-      style = gtk_css_animated_style_new (static_style,
-                                          priv->parent ? gtk_style_context_lookup_style (priv->parent) : NULL,
-                                          timestamp,
-                                          GTK_STYLE_PROVIDER_PRIVATE (priv->cascade),
-                                          gtk_style_context_should_create_transitions (context, current) ? current : NULL);
-  
-      gtk_style_context_clear_cache (context);
-
-      gtk_css_node_set_values (cssnode, style);
-
-      g_object_unref (static_style);
-      g_object_unref (style);
-    }
-  else
-    {
-      if (!_gtk_bitmask_is_empty (parent_changes))
-        {
-          GtkCssStyle *new_values;
-
-          if (GTK_IS_CSS_ANIMATED_STYLE (current))
-            {
-	      GtkCssStyle *new_base;
-              
-              new_base = update_properties (context,
-                                            GTK_CSS_ANIMATED_STYLE (current)->style,
-                                            cssnode->decl,
-                                            TRUE,
-                                            gtk_css_node_get_parent_style (context, cssnode),
-                                            parent_changes);
-              new_values = gtk_css_animated_style_new_advance (GTK_CSS_ANIMATED_STYLE (current),
-                                                               new_base,
-                                                               timestamp);
-              g_object_unref (new_base);
-            }
-          else
-            {
-	      new_values = update_properties (context,
-                                              current,
-                                              cssnode->decl,
-                                              TRUE,
-                                              gtk_css_node_get_parent_style (context, cssnode),
-                                              parent_changes);
-            }
-
-          gtk_css_node_set_values (cssnode, new_values);
-          g_object_unref (new_values);
-        }
-      else if (change & GTK_CSS_CHANGE_ANIMATE &&
-          gtk_style_context_is_animating (context))
-        {
-          GtkCssStyle *new_values;
-
-          new_values = gtk_css_animated_style_new_advance (GTK_CSS_ANIMATED_STYLE (cssnode->values),
-                                                           GTK_CSS_ANIMATED_STYLE (cssnode->values)->style,
-                                                           timestamp);
-          gtk_css_node_set_values (cssnode, new_values);
-          g_object_unref (new_values);
-        }
-    }
-
-  _gtk_style_context_update_animating (context);
-
-  changes = gtk_css_style_get_difference (cssnode->values, current);
-  g_object_unref (current);
-
   if (!_gtk_bitmask_is_empty (changes))
     gtk_style_context_do_invalidate (context, changes);
 
-  change = _gtk_css_change_for_child (change);
-  
-  gtk_style_context_update_cache (context, change, changes);
-
-  for (list = priv->children; list; list = list->next)
-    {
-      _gtk_style_context_validate (list->data, timestamp, change, changes);
-    }
-
-  _gtk_bitmask_free (changes);
-}
-
-void
-_gtk_style_context_queue_invalidate (GtkStyleContext *context,
-                                     GtkCssChange     change)
-{
-  GtkStyleContextPrivate *priv;
-
-  g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
-  g_return_if_fail (change != 0);
-
-  priv = context->priv;
-
-  if (priv->widget != NULL)
-    {
-      priv->pending_changes |= change;
-      gtk_style_context_set_invalid (context, TRUE);
-    }
-  else if (priv->widget_path != NULL)
-    {
-      G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
-      gtk_style_context_invalidate (context);
-      G_GNUC_END_IGNORE_DEPRECATIONS;
-    }
+  gtk_style_context_clear_property_cache (context);
 }
 
 /**
@@ -3131,24 +2437,10 @@ void
 gtk_style_context_invalidate (GtkStyleContext *context)
 {
   GtkBitmask *changes;
-  GtkCssStyle *style;
-  GtkCssNode *root;
 
   g_return_if_fail (GTK_IS_STYLE_CONTEXT (context));
 
-  gtk_style_context_clear_cache (context);
-  gtk_css_node_set_values (context->priv->cssnode, NULL);
-
-  root = gtk_style_context_get_root (context);
-  style = build_properties (context,
-                            root->decl,
-                            TRUE,
-                            gtk_css_node_get_parent_style (context, root));
-  gtk_css_node_set_values (root, style);
-  g_object_unref (style);
-
-  if (!gtk_style_context_is_saved (context))
-    _gtk_style_context_update_animating (context);
+  gtk_style_context_clear_property_cache (context);
 
   changes = _gtk_bitmask_new ();
   changes = _gtk_bitmask_invert_range (changes,
@@ -3904,7 +3196,6 @@ gtk_gradient_resolve_for_context (GtkGradient     *gradient,
                                   GtkStyleContext *context)
 {
   GtkStyleContextPrivate *priv = context->priv;
-  GtkCssDependencies ignored = 0;
 
   g_return_val_if_fail (gradient != NULL, NULL);
   g_return_val_if_fail (GTK_IS_STYLE_CONTEXT (context), NULL);
@@ -3912,7 +3203,6 @@ gtk_gradient_resolve_for_context (GtkGradient     *gradient,
   return _gtk_gradient_resolve_full (gradient,
                                      GTK_STYLE_PROVIDER_PRIVATE (priv->cascade),
                                      gtk_style_context_lookup_style (context),
-                                     priv->parent ? gtk_style_context_lookup_style (priv->parent) : NULL,
-                                     &ignored);
+                                     priv->parent ? gtk_style_context_lookup_style (priv->parent) : NULL);
 }
 

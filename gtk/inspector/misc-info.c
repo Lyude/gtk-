@@ -63,6 +63,10 @@ struct _GtkInspectorMiscInfoPrivate {
   GtkWidget *framecount;
   GtkWidget *accessible_role_row;
   GtkWidget *accessible_role;
+  GtkWidget *accessible_name_row;
+  GtkWidget *accessible_name;
+  GtkWidget *accessible_description_row;
+  GtkWidget *accessible_description;
   GtkWidget *mapped_row;
   GtkWidget *mapped;
   GtkWidget *realized_row;
@@ -316,6 +320,8 @@ update_info (gpointer data)
       accessible = ATK_OBJECT (gtk_widget_get_accessible (GTK_WIDGET (sl->priv->object)));
       role = atk_object_get_role (accessible);
       gtk_label_set_text (GTK_LABEL (sl->priv->accessible_role), atk_role_get_name (role));
+      gtk_label_set_text (GTK_LABEL (sl->priv->accessible_name), atk_object_get_name (accessible));
+      gtk_label_set_text (GTK_LABEL (sl->priv->accessible_description), atk_object_get_description (accessible));
       gtk_widget_set_visible (sl->priv->mapped, gtk_widget_get_mapped (GTK_WIDGET (sl->priv->object)));
       gtk_widget_set_visible (sl->priv->realized, gtk_widget_get_realized (GTK_WIDGET (sl->priv->object)));
       gtk_widget_set_visible (sl->priv->is_toplevel, gtk_widget_is_toplevel (GTK_WIDGET (sl->priv->object)));
@@ -348,7 +354,7 @@ update_info (gpointer data)
       frame = gdk_frame_clock_get_frame_counter (clock);
       frame_time = gdk_frame_clock_get_frame_time (clock);
 
-      tmp = g_strdup_printf ("%ld", frame);
+      tmp = g_strdup_printf ("%"G_GINT64_FORMAT, frame);
       gtk_label_set_label (GTK_LABEL (sl->priv->framecount), tmp);
       g_free (tmp);
 
@@ -407,6 +413,8 @@ gtk_inspector_misc_info_set_object (GtkInspectorMiscInfo *sl,
       gtk_widget_show (sl->priv->mnemonic_label_row);
       gtk_widget_show (sl->priv->tick_callback_row);
       gtk_widget_show (sl->priv->accessible_role_row);
+      gtk_widget_show (sl->priv->accessible_name_row);
+      gtk_widget_show (sl->priv->accessible_description_row);
       gtk_widget_show (sl->priv->mapped_row);
       gtk_widget_show (sl->priv->realized_row);
       gtk_widget_show (sl->priv->is_toplevel_row);
@@ -426,6 +434,8 @@ gtk_inspector_misc_info_set_object (GtkInspectorMiscInfo *sl,
       gtk_widget_hide (sl->priv->clip_area_row);
       gtk_widget_hide (sl->priv->tick_callback_row);
       gtk_widget_hide (sl->priv->accessible_role_row);
+      gtk_widget_hide (sl->priv->accessible_name_row);
+      gtk_widget_hide (sl->priv->accessible_description_row);
       gtk_widget_hide (sl->priv->mapped_row);
       gtk_widget_hide (sl->priv->realized_row);
       gtk_widget_hide (sl->priv->is_toplevel_row);
@@ -581,6 +591,10 @@ gtk_inspector_misc_info_class_init (GtkInspectorMiscInfoClass *klass)
   gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, framerate);
   gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, accessible_role_row);
   gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, accessible_role);
+  gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, accessible_name_row);
+  gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, accessible_name);
+  gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, accessible_description_row);
+  gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, accessible_description);
   gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, mapped_row);
   gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, mapped);
   gtk_widget_class_bind_template_child_private (widget_class, GtkInspectorMiscInfo, realized_row);

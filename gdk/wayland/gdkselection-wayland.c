@@ -416,9 +416,11 @@ async_write_data_cb (GObject      *object,
                                                 res, &error);
   if (error)
     {
-      g_warning ("Error writing selection data: %s", error->message);
-      g_error_free (error);
+      if (error->domain != G_IO_ERROR ||
+          error->code != G_IO_ERROR_CANCELLED)
+        g_warning ("Error writing selection data: %s", error->message);
 
+      g_error_free (error);
       async_write_data_free (write_data);
       return;
     }
@@ -558,11 +560,11 @@ gdk_wayland_selection_request_target (GdkWaylandSelection *wayland_selection,
   else
     return FALSE;
 
-  if (fd >= 0)
-    wayland_selection->stored_selection.fd = fd;
-
-  if (wayland_selection->source_requested_target == target)
+  if (wayland_selection->stored_selection.fd == fd &&
+      wayland_selection->source_requested_target == target)
     return FALSE;
+
+  wayland_selection->stored_selection.fd = fd;
 
   wayland_selection->source_requested_target = target;
 
@@ -668,16 +670,19 @@ data_source_cancelled (void                  *data,
   g_debug (G_STRLOC ": %s source = %p",
            G_STRFUNC, source);
 
-  context = gdk_wayland_drag_context_lookup_by_data_source (source);
-  display = gdk_window_get_display (context->source_window);
+  display = gdk_display_get_default ();
 
   if (source == wayland_selection->dnd_source)
-    gdk_wayland_selection_unset_data_source (display, atoms[ATOM_DND]);
+    {
+      gdk_wayland_selection_unset_data_source (display, atoms[ATOM_DND]);
+
+      context = gdk_wayland_drag_context_lookup_by_data_source (source);
+
+      if (context)
+        gdk_wayland_drag_context_undo_grab (context);
+    }
   else if (source == wayland_selection->clipboard_source)
     gdk_wayland_selection_unset_data_source (display, atoms[ATOM_CLIPBOARD]);
-
-  if (context)
-    gdk_wayland_drag_context_undo_grab (context);
 }
 
 static const struct wl_data_source_listener data_source_listener = {
@@ -893,9 +898,10 @@ _gdk_wayland_display_convert_selection (GdkDisplay *display,
       return;
     }
 
-  wl_data_offer_accept (wayland_selection->offer,
-                        _gdk_wayland_display_get_serial (GDK_WAYLAND_DISPLAY (display)),
-                        gdk_atom_name (target));
+  if (target != gdk_atom_intern_static_string ("TARGETS"))
+    wl_data_offer_accept (wayland_selection->offer,
+                          _gdk_wayland_display_get_serial (GDK_WAYLAND_DISPLAY (display)),
+                          gdk_atom_name (target));
 
   buffer_data = g_hash_table_lookup (wayland_selection->selection_buffers,
                                      target);

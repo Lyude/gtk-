@@ -1650,14 +1650,13 @@ gtk_range_realize (GtkWidget *widget)
   attributes.height = allocation.height;
   attributes.wclass = GDK_INPUT_ONLY;
   attributes.event_mask = gtk_widget_get_events (widget);
-  attributes.event_mask |= (GDK_BUTTON_PRESS_MASK |
-                            GDK_BUTTON_RELEASE_MASK |
-                            GDK_SCROLL_MASK |
-                            GDK_SMOOTH_SCROLL_MASK |
-                            GDK_ENTER_NOTIFY_MASK |
-                            GDK_LEAVE_NOTIFY_MASK |
-                            GDK_POINTER_MOTION_MASK |
-                            GDK_POINTER_MOTION_HINT_MASK);
+  attributes.event_mask |= GDK_BUTTON_PRESS_MASK |
+                           GDK_BUTTON_RELEASE_MASK |
+                           GDK_SCROLL_MASK |
+                           GDK_SMOOTH_SCROLL_MASK |
+                           GDK_ENTER_NOTIFY_MASK |
+                           GDK_LEAVE_NOTIFY_MASK |
+                           GDK_POINTER_MOTION_MASK;
 
   attributes_mask = GDK_WA_X | GDK_WA_Y;
 
@@ -2823,10 +2822,11 @@ _gtk_range_get_wheel_delta (GtkRange       *range,
   GtkRangePrivate *priv = range->priv;
   GtkAdjustment *adjustment = priv->adjustment;
   gdouble dx, dy;
-  gdouble delta;
+  gdouble delta = 0;
   gdouble page_size;
   gdouble page_increment;
   gdouble scroll_unit;
+  GdkScrollDirection direction;
 
   page_size = gtk_adjustment_get_page_size (adjustment);
   page_increment = gtk_adjustment_get_page_increment (adjustment);
@@ -2842,16 +2842,15 @@ _gtk_range_get_wheel_delta (GtkRange       *range,
       scroll_unit = 1;
 #endif
 
-      if (dx != 0 &&
-          gtk_orientable_get_orientation (GTK_ORIENTABLE (range)) == GTK_ORIENTATION_HORIZONTAL)
-        delta = dx * scroll_unit;
+      if (gtk_orientable_get_orientation (GTK_ORIENTABLE (range)) == GTK_ORIENTATION_HORIZONTAL)
+        delta = - (dx ? dx : dy) * scroll_unit;
       else
         delta = dy * scroll_unit;
     }
-  else
+  else if (gdk_event_get_scroll_direction ((GdkEvent *) event, &direction))
     {
-      if (event->direction == GDK_SCROLL_UP ||
-          event->direction == GDK_SCROLL_LEFT)
+      if (direction == GDK_SCROLL_UP ||
+          direction == GDK_SCROLL_RIGHT)
         delta = - scroll_unit;
       else
         delta = scroll_unit;

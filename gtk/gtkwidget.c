@@ -60,6 +60,7 @@
 #include "gtksizerequest.h"
 #include "gtkstylecontextprivate.h"
 #include "gtkcssprovider.h"
+#include "gtkcsswidgetnodeprivate.h"
 #include "gtkmodifierstyle.h"
 #include "gtkversion.h"
 #include "gtkdebug.h"
@@ -557,6 +558,7 @@ struct _GtkWidgetPrivate
    * the font to use for text.
    */
   GtkStyle *style;
+  GtkCssNode *cssnode;
   GtkStyleContext *context;
 
   /* Widget's path for styling */
@@ -733,7 +735,8 @@ struct _GtkStateData
 static void	gtk_widget_base_class_init	(gpointer            g_class);
 static void	gtk_widget_class_init		(GtkWidgetClass     *klass);
 static void	gtk_widget_base_class_finalize	(GtkWidgetClass     *klass);
-static void	gtk_widget_init			(GtkWidget          *widget);
+static void     gtk_widget_init                  (GTypeInstance     *instance,
+                                                  gpointer           g_class);
 static void	gtk_widget_set_property		 (GObject           *object,
 						  guint              prop_id,
 						  const GValue      *value,
@@ -992,7 +995,7 @@ gtk_widget_get_type (void)
 	NULL,		/* class_init */
 	sizeof (GtkWidget),
 	0,		/* n_preallocs */
-	(GInstanceInitFunc) gtk_widget_init,
+	gtk_widget_init,
 	NULL,		/* value_table */
       };
 
@@ -4454,8 +4457,9 @@ _gtk_widget_cancel_sequence (GtkWidget        *widget,
 }
 
 static void
-gtk_widget_init (GtkWidget *widget)
+gtk_widget_init (GTypeInstance *instance, gpointer g_class)
 {
+  GtkWidget *widget = GTK_WIDGET (instance);
   GtkWidgetPrivate *priv;
 
   widget->priv = gtk_widget_get_instance_private (widget); 
@@ -4505,6 +4509,11 @@ gtk_widget_init (GtkWidget *widget)
   priv->need_compute_expand = FALSE;
 
   _gtk_size_request_cache_init (&priv->requests);
+
+  priv->cssnode = gtk_css_widget_node_new (widget);
+  gtk_css_node_set_state (priv->cssnode, GTK_STATE_FLAG_DIR_LTR);
+  /* need to set correct type here, and only class has the correct type here */
+  gtk_css_node_set_widget_type (priv->cssnode, G_TYPE_FROM_CLASS (g_class));
 
   G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
   priv->style = gtk_widget_get_default_style ();
@@ -4738,6 +4747,7 @@ gtk_widget_unparent (GtkWidget *widget)
   gtk_widget_unset_state_flags (widget, GTK_STATE_FLAG_BACKDROP);
   if (priv->context)
     gtk_style_context_set_parent (priv->context, NULL);
+  gtk_css_node_set_parent (widget->priv->cssnode, NULL);
 
   _gtk_widget_update_parent_muxer (widget);
 
@@ -4859,6 +4869,8 @@ gtk_widget_show (GtkWidget *widget)
             gtk_widget_queue_compute_expand (widget->priv->parent);
         }
 
+      gtk_css_node_set_visible (widget->priv->cssnode, TRUE);
+
       g_signal_emit (widget, widget_signals[SHOW], 0);
       g_object_notify (G_OBJECT (widget), "visible");
 
@@ -4956,6 +4968,8 @@ gtk_widget_hide (GtkWidget *widget)
         {
           gtk_widget_queue_compute_expand (widget);
         }
+
+      gtk_css_node_set_visible (widget->priv->cssnode, FALSE);
 
       g_signal_emit (widget, widget_signals[HIDE], 0);
       if (!gtk_widget_is_toplevel (widget))
@@ -5056,9 +5070,6 @@ gtk_widget_map (GtkWidget *widget)
       if (!gtk_widget_get_has_window (widget))
         gdk_window_invalidate_rect (priv->window, &priv->clip, FALSE);
 
-      if (widget->priv->context)
-        _gtk_style_context_update_animating (widget->priv->context);
-
       gtk_widget_pop_verify_invariants (widget);
     }
 }
@@ -5081,18 +5092,17 @@ gtk_widget_unmap (GtkWidget *widget)
 
   if (gtk_widget_get_mapped (widget))
     {
+      g_object_ref (widget);
       gtk_widget_push_verify_invariants (widget);
 
       if (!gtk_widget_get_has_window (widget))
 	gdk_window_invalidate_rect (priv->window, &priv->clip, FALSE);
       _gtk_tooltip_hide (widget);
 
-      if (widget->priv->context)
-        _gtk_style_context_update_animating (widget->priv->context);
-
       g_signal_emit (widget, widget_signals[UNMAP], 0);
 
       gtk_widget_pop_verify_invariants (widget);
+      g_object_unref (widget);
     }
 }
 
@@ -5436,6 +5446,8 @@ gtk_widget_connect_frame_clock (GtkWidget     *widget,
       gdk_frame_clock_begin_updating (frame_clock);
     }
 
+  gtk_css_node_invalidate_frame_clock (priv->cssnode, FALSE);
+
   if (priv->context)
     gtk_style_context_set_frame_clock (priv->context, frame_clock);
 }
@@ -5448,6 +5460,8 @@ gtk_widget_disconnect_frame_clock (GtkWidget     *widget,
 
   if (GTK_IS_CONTAINER (widget))
     _gtk_container_stop_idle_sizer (GTK_CONTAINER (widget));
+
+  gtk_css_node_invalidate_frame_clock (priv->cssnode, FALSE);
 
   if (priv->clock_tick_id)
     {
@@ -5564,6 +5578,7 @@ gtk_widget_unrealize (GtkWidget *widget)
 {
   g_return_if_fail (GTK_IS_WIDGET (widget));
 
+  g_object_ref (widget);
   gtk_widget_push_verify_invariants (widget);
 
   if (widget->priv->has_shape_mask)
@@ -5574,8 +5589,6 @@ gtk_widget_unrealize (GtkWidget *widget)
 
   if (gtk_widget_get_realized (widget))
     {
-      g_object_ref (widget);
-
       if (widget->priv->mapped)
         gtk_widget_unmap (widget);
 
@@ -5585,11 +5598,10 @@ gtk_widget_unrealize (GtkWidget *widget)
       g_signal_emit (widget, widget_signals[UNREALIZE], 0);
       g_assert (!widget->priv->mapped);
       gtk_widget_set_realized (widget, FALSE);
-
-      g_object_unref (widget);
     }
 
   gtk_widget_pop_verify_invariants (widget);
+  g_object_unref (widget);
 }
 
 /*****************************************
@@ -9530,6 +9542,8 @@ gtk_widget_set_parent (GtkWidget *widget,
   data.flags_to_unset = 0;
   gtk_widget_propagate_state (widget, &data);
 
+  if (gtk_css_node_get_parent (widget->priv->cssnode) == NULL)
+    gtk_css_node_set_parent (widget->priv->cssnode, parent->priv->cssnode);
   if (priv->context)
     gtk_style_context_set_parent (priv->context,
                                   gtk_widget_get_style_context (parent));
@@ -12181,11 +12195,11 @@ gtk_widget_finalize (GObject *object)
   if (priv->path)
     gtk_widget_path_free (priv->path);
 
+  gtk_css_widget_node_widget_destroyed (GTK_CSS_WIDGET_NODE (priv->cssnode));
+  g_object_unref (priv->cssnode);
+
   if (priv->context)
-    {
-      _gtk_style_context_set_widget (priv->context, NULL);
-      g_object_unref (priv->context);
-    }
+    g_object_unref (priv->context);
 
   _gtk_size_request_cache_free (&priv->requests);
 
@@ -15246,14 +15260,12 @@ gtk_widget_real_set_has_tooltip (GtkWidget *widget,
 	    gdk_window_set_events (priv->window,
 				   gdk_window_get_events (priv->window) |
 				   GDK_LEAVE_NOTIFY_MASK |
-				   GDK_POINTER_MOTION_MASK |
-				   GDK_POINTER_MOTION_HINT_MASK);
+				   GDK_POINTER_MOTION_MASK);
 
 	  if (gtk_widget_get_has_window (widget))
 	      gtk_widget_add_events (widget,
 				     GDK_LEAVE_NOTIFY_MASK |
-				     GDK_POINTER_MOTION_MASK |
-				     GDK_POINTER_MOTION_HINT_MASK);
+				     GDK_POINTER_MOTION_MASK);
 	}
 
       g_object_set_qdata (G_OBJECT (widget), quark_has_tooltip,
@@ -16308,7 +16320,7 @@ gtk_widget_path_append_for_widget (GtkWidgetPath *path,
   g_return_val_if_fail (path != NULL, 0);
   g_return_val_if_fail (GTK_IS_WIDGET (widget), 0);
 
-  pos = gtk_widget_path_append_type (path, G_OBJECT_TYPE (widget));
+  pos = gtk_widget_path_append_type (path, gtk_css_node_get_widget_type (widget->priv->cssnode));
 
   if (widget->priv->name)
     gtk_widget_path_iter_set_name (path, pos, widget->priv->name);
@@ -16322,10 +16334,10 @@ gtk_widget_path_append_for_widget (GtkWidgetPath *path,
       /* Also add any persistent classes in
        * the style context the widget path
        */
-      classes = gtk_style_context_list_classes (widget->priv->context);
+      classes = gtk_css_node_list_classes (widget->priv->cssnode);
 
       for (l = classes; l; l = l->next)
-        gtk_widget_path_iter_add_class (path, pos, l->data);
+        gtk_widget_path_iter_add_class (path, pos, g_quark_to_string (GPOINTER_TO_UINT (l->data)));
 
       g_list_free (classes);
     }
@@ -16388,14 +16400,18 @@ gtk_widget_get_path (GtkWidget *widget)
 }
 
 void
-_gtk_widget_style_context_invalidated (GtkWidget *widget)
+gtk_widget_clear_path (GtkWidget *widget)
 {
   if (widget->priv->path)
     {
       gtk_widget_path_free (widget->priv->path);
       widget->priv->path = NULL;
     }
+}
 
+void
+_gtk_widget_style_context_invalidated (GtkWidget *widget)
+{
   if (gtk_widget_get_realized (widget))
     g_signal_emit (widget, widget_signals[STYLE_UPDATED], 0);
   else
@@ -16406,6 +16422,19 @@ _gtk_widget_style_context_invalidated (GtkWidget *widget)
       widget->priv->style_update_pending = TRUE;
     }
 }
+
+GtkCssNode *
+gtk_widget_get_css_node (GtkWidget *widget)
+{
+  return widget->priv->cssnode;
+}
+
+GtkStyleContext *
+_gtk_widget_peek_style_context (GtkWidget *widget)
+{
+  return widget->priv->context;
+}
+
 
 /**
  * gtk_widget_get_style_context:
@@ -16430,7 +16459,7 @@ gtk_widget_get_style_context (GtkWidget *widget)
       GdkScreen *screen;
       GdkFrameClock *frame_clock;
 
-      priv->context = gtk_style_context_new ();
+      priv->context = gtk_style_context_new_for_node (priv->cssnode);
 
       gtk_style_context_set_id (priv->context, priv->name);
       gtk_style_context_set_state (priv->context, priv->state_flags);
@@ -16447,8 +16476,6 @@ gtk_widget_get_style_context (GtkWidget *widget)
       if (priv->parent)
         gtk_style_context_set_parent (priv->context,
                                       gtk_widget_get_style_context (priv->parent));
-
-      _gtk_style_context_set_widget (priv->context, widget);
     }
 
   return widget->priv->context;
@@ -16462,10 +16489,7 @@ _gtk_widget_invalidate_style_context (GtkWidget    *widget,
 
   priv = widget->priv;
 
-  if (priv->context == NULL)
-    return;
-
-  _gtk_style_context_queue_invalidate (priv->context, change);
+  gtk_css_node_invalidate (priv->cssnode, change);
 }
 
 /**

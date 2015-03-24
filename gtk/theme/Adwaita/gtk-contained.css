@@ -4408,7 +4408,7 @@ GtkVolumeButton.button, .header-bar GtkVolumeButton.button.titlebutton,
     box-shadow: none; }
   .window-frame.ssd {
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.23); }
-  .window-frame.csd .popup {
+  .window-frame.csd.popup {
     border-radius: 0;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.13); }
   .window-frame.csd.tooltip {
@@ -4417,6 +4417,12 @@ GtkVolumeButton.button, .header-bar GtkVolumeButton.button.titlebutton,
   .window-frame.csd.message-dialog {
     border-radius: 7px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.13); }
+  .window-frame.solid-csd {
+    border-radius: 0;
+    margin: 4px;
+    background-color: #ededed;
+    border: solid 1px #a8a8a8;
+    box-shadow: none; }
 
 .header-bar .titlebutton.button,
 .titlebar .titlebutton.button {
@@ -4441,7 +4447,8 @@ GtkVolumeButton.button, .header-bar GtkVolumeButton.button.titlebutton,
   outline-color: rgba(255, 255, 255, 0.3); }
   .view:backdrop:selected, GtkCalendar:backdrop:selected, .label:backdrop:selected, .grid-child:backdrop:selected, .entry:backdrop:selected, .menuitem.button.flat:backdrop:selected, .header-bar .menuitem.titlebutton.button:backdrop:selected,
   .titlebar .menuitem.titlebutton.button:backdrop:selected, .list-row:backdrop:selected, .sidebar:backdrop:selected, GtkPlacesSidebar.sidebar .view:backdrop:selected, GtkPlacesSidebar.sidebar GtkCalendar:backdrop:selected {
-    color: #ffffff; }
+    color: #ffffff;
+    background-color: #929292; }
 
 /* Decouple the font of context menus from their entry/textview */
 .touch-selection,

@@ -63,6 +63,21 @@ gtk_css_animated_style_get_section (GtkCssStyle *style,
   return gtk_css_style_get_section (animated->style, id);
 }
 
+static gboolean
+gtk_css_animated_style_is_static (GtkCssStyle *style)
+{
+  GtkCssAnimatedStyle *animated = GTK_CSS_ANIMATED_STYLE (style);
+  GSList *list;
+
+  for (list = animated->animations; list; list = list->next)
+    {
+      if (!_gtk_style_animation_is_static (list->data, animated->current_time))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
 static void
 gtk_css_animated_style_dispose (GObject *object)
 {
@@ -101,6 +116,7 @@ gtk_css_animated_style_class_init (GtkCssAnimatedStyleClass *klass)
 
   style_class->get_value = gtk_css_animated_style_get_value;
   style_class->get_section = gtk_css_animated_style_get_section;
+  style_class->is_static = gtk_css_animated_style_is_static;
 }
 
 static void
@@ -410,6 +426,9 @@ gtk_css_animated_style_new (GtkCssStyle             *base_style,
   gtk_internal_return_val_if_fail (GTK_IS_STYLE_PROVIDER (provider), NULL);
   gtk_internal_return_val_if_fail (previous_style == NULL || GTK_IS_CSS_STYLE (previous_style), NULL);
 
+  if (timestamp == 0)
+    return g_object_ref (base_style);
+
   animations = NULL;
 
   if (previous_style != NULL)
@@ -441,6 +460,9 @@ gtk_css_animated_style_new_advance (GtkCssAnimatedStyle *source,
   gtk_internal_return_val_if_fail (GTK_IS_CSS_ANIMATED_STYLE (source), NULL);
   gtk_internal_return_val_if_fail (GTK_IS_CSS_STYLE (base), NULL);
   
+  if (timestamp == 0)
+    return g_object_ref (source->style);
+
   animations = NULL;
   for (l = source->animations; l; l = l->next)
     {
@@ -465,20 +487,4 @@ gtk_css_animated_style_new_advance (GtkCssAnimatedStyle *source,
   gtk_css_animated_style_apply_animations (result, timestamp);
 
   return GTK_CSS_STYLE (result);
-}
-
-gboolean
-gtk_css_animated_style_is_static (GtkCssAnimatedStyle *style)
-{
-  GSList *list;
-
-  gtk_internal_return_val_if_fail (GTK_IS_CSS_ANIMATED_STYLE (style), TRUE);
-
-  for (list = style->animations; list; list = list->next)
-    {
-      if (!_gtk_style_animation_is_static (list->data, style->current_time))
-        return FALSE;
-    }
-
-  return TRUE;
 }

@@ -67,31 +67,15 @@ gtk_css_value_shadow_compute (GtkCssValue             *shadow,
                               guint                    property_id,
                               GtkStyleProviderPrivate *provider,
                               GtkCssStyle             *style,
-                              GtkCssStyle             *parent_style,
-                              GtkCssDependencies      *dependencies)
+                              GtkCssStyle             *parent_style)
 {
   GtkCssValue *hoffset, *voffset, *radius, *spread, *color;
-  GtkCssDependencies child_deps;
 
-  child_deps = 0;
-  hoffset = _gtk_css_value_compute (shadow->hoffset, property_id, provider, style, parent_style, &child_deps);
-  *dependencies = _gtk_css_dependencies_union (*dependencies, child_deps);
-
-  child_deps = 0;
-  voffset = _gtk_css_value_compute (shadow->voffset, property_id, provider, style, parent_style, &child_deps);
-  *dependencies = _gtk_css_dependencies_union (*dependencies, child_deps);
-
-  child_deps = 0;
-  radius = _gtk_css_value_compute (shadow->radius, property_id, provider, style, parent_style, &child_deps);
-  *dependencies = _gtk_css_dependencies_union (*dependencies, child_deps);
-
-  child_deps = 0;
-  spread = _gtk_css_value_compute (shadow->spread, property_id, provider, style, parent_style, &child_deps),
-  *dependencies = _gtk_css_dependencies_union (*dependencies, child_deps);
-
-  child_deps = 0;
-  color = _gtk_css_value_compute (shadow->color, property_id, provider, style, parent_style, &child_deps);
-  *dependencies = _gtk_css_dependencies_union (*dependencies, child_deps);
+  hoffset = _gtk_css_value_compute (shadow->hoffset, property_id, provider, style, parent_style);
+  voffset = _gtk_css_value_compute (shadow->voffset, property_id, provider, style, parent_style);
+  radius = _gtk_css_value_compute (shadow->radius, property_id, provider, style, parent_style);
+  spread = _gtk_css_value_compute (shadow->spread, property_id, provider, style, parent_style),
+  color = _gtk_css_value_compute (shadow->color, property_id, provider, style, parent_style);
 
   return gtk_css_shadow_value_new (hoffset, voffset, radius, spread, shadow->inset, color);
 }
@@ -313,7 +297,10 @@ static gboolean
 needs_blur (const GtkCssValue *shadow)
 {
   double radius = _gtk_css_number_value_get (shadow->radius, 0);
-  if (radius == 0.0)
+
+  /* The code doesn't actually do any blurring for radius 1, as it
+   * ends up with box filter size 1 */
+  if (radius <= 1.0)
     return FALSE;
 
   return TRUE;
@@ -323,12 +310,15 @@ static const cairo_user_data_key_t original_cr_key;
 
 static cairo_t *
 gtk_css_shadow_value_start_drawing (const GtkCssValue *shadow,
-                                    cairo_t           *cr)
+                                    cairo_t           *cr,
+                                    GtkBlurFlags       blur_flags)
 {
   cairo_rectangle_int_t clip_rect;
   cairo_surface_t *surface;
   cairo_t *blur_cr;
   gdouble radius, clip_radius;
+  gboolean blur_x = (blur_flags & GTK_BLUR_X) != 0;
+  gboolean blur_y = (blur_flags & GTK_BLUR_Y) != 0;
 
   if (!needs_blur (shadow))
     return cr;
@@ -338,12 +328,22 @@ gtk_css_shadow_value_start_drawing (const GtkCssValue *shadow,
   radius = _gtk_css_number_value_get (shadow->radius, 0);
   clip_radius = _gtk_cairo_blur_compute_pixels (radius);
 
+  if (blur_flags & GTK_BLUR_REPEAT)
+    {
+      if (!blur_x)
+        clip_rect.width = 1;
+      if (!blur_y)
+        clip_rect.height = 1;
+    }
+
   /* Create a larger surface to center the blur. */
   surface = cairo_surface_create_similar_image (cairo_get_target (cr),
                                                 CAIRO_FORMAT_A8,
-                                                clip_rect.width + 2 * clip_radius,
-                                                clip_rect.height + 2 * clip_radius);
-  cairo_surface_set_device_offset (surface, clip_radius - clip_rect.x, clip_radius - clip_rect.y);
+                                                clip_rect.width + (blur_x ? 2 * clip_radius : 0),
+                                                clip_rect.height + (blur_y ? 2 * clip_radius : 0));
+  cairo_surface_set_device_offset (surface,
+                                   (blur_x ? clip_radius : 0) - clip_rect.x,
+                                   (blur_y ? clip_radius : 0) - clip_rect.y);
   blur_cr = cairo_create (surface);
   cairo_set_user_data (blur_cr, &original_cr_key, cairo_reference (cr), (cairo_destroy_func_t) cairo_destroy);
 
@@ -358,9 +358,24 @@ gtk_css_shadow_value_start_drawing (const GtkCssValue *shadow,
   return blur_cr;
 }
 
+void
+mask_surface_repeat (cairo_t         *cr,
+                     cairo_surface_t *surface)
+{
+    cairo_pattern_t *pattern;
+
+    pattern = cairo_pattern_create_for_surface (surface);
+    cairo_pattern_set_extend (pattern, CAIRO_EXTEND_REPEAT);
+
+    cairo_mask (cr, pattern);
+
+    cairo_pattern_destroy (pattern);
+}
+
 static cairo_t *
 gtk_css_shadow_value_finish_drawing (const GtkCssValue *shadow,
-                                     cairo_t           *cr)
+                                     cairo_t           *cr,
+                                     GtkBlurFlags       blur_flags)
 {
   gdouble radius;
   cairo_t *original_cr;
@@ -374,12 +389,16 @@ gtk_css_shadow_value_finish_drawing (const GtkCssValue *shadow,
   /* Blur the surface. */
   surface = cairo_get_target (cr);
   radius = _gtk_css_number_value_get (shadow->radius, 0);
-  _gtk_cairo_blur_surface (surface, radius);
+  _gtk_cairo_blur_surface (surface, radius, blur_flags);
 
   gdk_cairo_set_source_rgba (original_cr, _gtk_css_rgba_value_get_rgba (shadow->color));
-  cairo_mask_surface (original_cr, surface, 0, 0);
+  if (blur_flags & GTK_BLUR_REPEAT)
+    mask_surface_repeat (original_cr, surface);
+  else
+    cairo_mask_surface (original_cr, surface, 0, 0);
 
   cairo_destroy (cr);
+
   cairo_surface_destroy (surface);
 
   return original_cr;
@@ -441,7 +460,7 @@ make_blurred_pango_surface (cairo_t           *existing_cr,
   cr = cairo_create (surface);
   cairo_move_to (cr, 0, 0);
   _gtk_pango_fill_layout (cr, layout);
-  _gtk_cairo_blur_surface (surface, radius * x_scale);
+  _gtk_cairo_blur_surface (surface, radius * x_scale, GTK_BLUR_X | GTK_BLUR_Y);
 
   cairo_destroy (cr);
 
@@ -528,14 +547,14 @@ _gtk_css_shadow_value_paint_icon (const GtkCssValue *shadow,
   pattern = cairo_pattern_reference (cairo_get_source (cr));
 
   gdk_cairo_set_source_rgba (cr, _gtk_css_rgba_value_get_rgba (shadow->color));
-  cr = gtk_css_shadow_value_start_drawing (shadow, cr);
+  cr = gtk_css_shadow_value_start_drawing (shadow, cr, GTK_BLUR_X | GTK_BLUR_Y);
 
   cairo_translate (cr,
                    _gtk_css_number_value_get (shadow->hoffset, 0),
                    _gtk_css_number_value_get (shadow->voffset, 0));
   cairo_mask (cr, pattern);
 
-  cr = gtk_css_shadow_value_finish_drawing (shadow, cr);
+  cr = gtk_css_shadow_value_finish_drawing (shadow, cr, GTK_BLUR_X | GTK_BLUR_Y);
 
   cairo_restore (cr);
   cairo_pattern_destroy (pattern);
@@ -583,16 +602,18 @@ draw_shadow (const GtkCssValue   *shadow,
 	     cairo_t             *cr,
 	     GtkRoundedBox       *box,
 	     GtkRoundedBox       *clip_box,
-	     gboolean             blur)
+	     GtkBlurFlags         blur_flags)
 {
   cairo_t *shadow_cr;
+  gboolean do_blur;
 
   if (has_empty_clip (cr))
     return;
 
   gdk_cairo_set_source_rgba (cr, _gtk_css_rgba_value_get_rgba (shadow->color));
-  if (blur)
-    shadow_cr = gtk_css_shadow_value_start_drawing (shadow, cr);
+  do_blur = (blur_flags & (GTK_BLUR_X | GTK_BLUR_Y)) != 0;
+  if (do_blur)
+    shadow_cr = gtk_css_shadow_value_start_drawing (shadow, cr, blur_flags);
   else
     shadow_cr = cr;
 
@@ -603,8 +624,8 @@ draw_shadow (const GtkCssValue   *shadow,
 
   cairo_fill (shadow_cr);
 
-  if (blur)
-    gtk_css_shadow_value_finish_drawing (shadow, shadow_cr);
+  if (do_blur)
+    gtk_css_shadow_value_finish_drawing (shadow, shadow_cr, blur_flags);
 }
 
 void
@@ -660,7 +681,7 @@ _gtk_css_shadow_value_paint_box (const GtkCssValue   *shadow,
   _gtk_rounded_box_shrink (&clip_box, -clip_radius, -clip_radius, -clip_radius, -clip_radius);
 
   if (!needs_blur (shadow))
-    draw_shadow (shadow, cr, &box, &clip_box, FALSE);
+    draw_shadow (shadow, cr, &box, &clip_box, GTK_BLUR_NONE);
   else
     {
       int i, x1, x2, y1, y2;
@@ -730,7 +751,7 @@ _gtk_css_shadow_value_paint_box (const GtkCssValue   *shadow,
 	  /* Also clip with remaining to ensure we never draw any area twice */
 	  gdk_cairo_region (cr, remaining);
 	  cairo_clip (cr);
-	  draw_shadow (shadow, cr, &box, &clip_box, TRUE);
+	  draw_shadow (shadow, cr, &box, &clip_box, GTK_BLUR_X | GTK_BLUR_Y);
 	  cairo_restore (cr);
 
 	  /* We drew the region, remove it from remaining */
@@ -744,8 +765,11 @@ _gtk_css_shadow_value_paint_box (const GtkCssValue   *shadow,
       /* Then the sides */
       for (i = 0; i < 4; i++)
 	{
+          GtkBlurFlags blur_flags = GTK_BLUR_REPEAT;
+
 	  if (i == GTK_CSS_TOP || i == GTK_CSS_BOTTOM)
 	    {
+	      blur_flags |= GTK_BLUR_Y;
 	      x1 = floor (box.box.x - clip_radius);
 	      x2 = ceil (box.box.x + box.box.width + clip_radius);
 	    }
@@ -762,6 +786,7 @@ _gtk_css_shadow_value_paint_box (const GtkCssValue   *shadow,
 
 	  if (i == GTK_CSS_LEFT || i == GTK_CSS_RIGHT)
 	    {
+	      blur_flags |= GTK_BLUR_X;
 	      y1 = floor (box.box.y - clip_radius);
 	      y2 = ceil (box.box.y + box.box.height + clip_radius);
 	    }
@@ -782,7 +807,7 @@ _gtk_css_shadow_value_paint_box (const GtkCssValue   *shadow,
 	  /* Also clip with remaining to ensure we never draw any area twice */
 	  gdk_cairo_region (cr, remaining);
 	  cairo_clip (cr);
-	  draw_shadow (shadow, cr, &box, &clip_box, TRUE);
+	  draw_shadow (shadow, cr, &box, &clip_box, blur_flags);
 	  cairo_restore (cr);
 
 	  /* We drew the region, remove it from remaining */
@@ -798,7 +823,7 @@ _gtk_css_shadow_value_paint_box (const GtkCssValue   *shadow,
       cairo_save (cr);
       gdk_cairo_region (cr, remaining);
       cairo_clip (cr);
-      draw_shadow (shadow, cr, &box, &clip_box, FALSE);
+      draw_shadow (shadow, cr, &box, &clip_box, GTK_BLUR_NONE);
       cairo_restore (cr);
 
       cairo_region_destroy (remaining);

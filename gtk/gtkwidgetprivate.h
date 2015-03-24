@@ -32,6 +32,7 @@
 
 G_BEGIN_DECLS
 
+GtkCssNode *  gtk_widget_get_css_node       (GtkWidget *widget);
 void         _gtk_widget_set_visible_flag   (GtkWidget *widget,
                                              gboolean   visible);
 gboolean     _gtk_widget_get_in_reparent    (GtkWidget *widget);
@@ -130,6 +131,7 @@ gpointer          _gtk_widget_peek_request_cache           (GtkWidget *widget);
 void              _gtk_widget_buildable_finish_accelerator (GtkWidget *widget,
                                                             GtkWidget *toplevel,
                                                             gpointer   user_data);
+GtkStyleContext * _gtk_widget_peek_style_context           (GtkWidget *widget);
 GtkStyle *        _gtk_widget_get_style                    (GtkWidget *widget);
 void              _gtk_widget_set_style                    (GtkWidget *widget,
                                                             GtkStyle  *style);
@@ -146,6 +148,7 @@ gboolean          _gtk_widget_captured_event               (GtkWidget *widget,
                                                             GdkEvent  *event);
 
 GtkWidgetPath *   _gtk_widget_create_path                  (GtkWidget    *widget);
+void              gtk_widget_clear_path                    (GtkWidget    *widget);
 void              _gtk_widget_invalidate_style_context     (GtkWidget    *widget,
                                                             GtkCssChange  change);
 void              _gtk_widget_style_context_invalidated    (GtkWidget    *widget);

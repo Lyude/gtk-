@@ -23,7 +23,9 @@
 
 G_BEGIN_DECLS
 
-/* forward declaration for GtkCssValue */
+typedef union _GtkCssMatcher GtkCssMatcher;
+typedef struct _GtkCssNode GtkCssNode;
+typedef struct _GtkCssNodeDeclaration GtkCssNodeDeclaration;
 typedef struct _GtkCssStyle GtkCssStyle;
 typedef struct _GtkStyleProviderPrivate GtkStyleProviderPrivate; /* dummy typedef */
 
@@ -49,7 +51,9 @@ typedef enum { /*< skip >*/
   GTK_CSS_CHANGE_PARENT_SIBLING_STATE     = (1 << 15),
   /* add more */
   GTK_CSS_CHANGE_SOURCE                   = (1 << 16),
-  GTK_CSS_CHANGE_ANIMATE                  = (1 << 17),
+  GTK_CSS_CHANGE_PARENT_STYLE             = (1 << 17),
+  GTK_CSS_CHANGE_TIMESTAMP                = (1 << 18),
+  GTK_CSS_CHANGE_ANIMATIONS               = (1 << 19),
 
   GTK_CSS_CHANGE_RESERVED_BIT             = (1 << 31) /* Used internally in gtkcssselector.c */
 } GtkCssChange;
@@ -62,13 +66,6 @@ typedef enum { /*< skip >*/
                                    GTK_CSS_CHANGE_PARENT_NAME | GTK_CSS_CHANGE_PARENT_SIBLING_NAME | \
                                    GTK_CSS_CHANGE_PARENT_POSITION | GTK_CSS_CHANGE_PARENT_SIBLING_POSITION | \
                                    GTK_CSS_CHANGE_PARENT_STATE | GTK_CSS_CHANGE_PARENT_SIBLING_STATE)
-
-typedef enum /*< skip >*/ {
-  GTK_CSS_DEPENDS_ON_PARENT = (1 << 0),
-  GTK_CSS_EQUALS_PARENT = (1 << 1),
-  GTK_CSS_DEPENDS_ON_COLOR = (1 << 2),
-  GTK_CSS_DEPENDS_ON_FONT_SIZE = (1 << 3)
-} GtkCssDependencies;
 
 /*
  * GtkCssAffects:
@@ -279,8 +276,6 @@ typedef enum /*< skip >*/ {
 
 GtkCssChange            _gtk_css_change_for_sibling              (GtkCssChange       match);
 GtkCssChange            _gtk_css_change_for_child                (GtkCssChange       match);
-GtkCssDependencies      _gtk_css_dependencies_union              (GtkCssDependencies first,
-                                                                  GtkCssDependencies second);
 
 /* for lack of better place to put it */
 /* mirror what cairo does */
